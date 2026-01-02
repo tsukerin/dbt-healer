@@ -1,0 +1,9 @@
+.venv/
+.env
+err_hashes
+
+logs/
+__pycache__/
+
+airflow/config/
+airflow/plugins/
