@@ -8,7 +8,7 @@ from common.config import (
     GITHUB_TOKEN, 
     REPO_NAME, 
     BASE_BRANCH, 
-    GITHUB_USERNAME
+    GITHUB_USERNAME,
 )
 
 from healer.pusher import (

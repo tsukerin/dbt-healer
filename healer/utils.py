@@ -41,7 +41,7 @@ def get_context_log() -> list[str]:
                 is_found = True
             if is_found and line.strip():
                 context_log.append(line.strip())
-
+    
     return context_log
 
 def get_file_context(files: list) -> str:

@@ -6,6 +6,7 @@ import asyncpg
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 
 from common.config import GITHUB_USERNAME, REPO_NAME, GITHUB_TOKEN, BOT_TOKEN, DB_USERNAME, DB_PASSWORD, DB_DATABASE
 
@@ -28,7 +29,11 @@ async def notify_about_pr():
     try:
         async with conn.transaction(): 
             async for id in conn.cursor("select tid from meta.ids"):
-                await bot.send_message(chat_id=id['tid'], text=f"Новый PR!\nURL: {last_pr}")
+                try:
+                    await bot.send_message(chat_id=id['tid'], text=f"Новый PR!\nURL: {last_pr}")
+                except TelegramBadRequest as e:
+                    if 'chat not found' in str(e):
+                        print(f"Чат с id {id} не найден. Пропускаю...")
     finally:
         await bot.session.close()
     
