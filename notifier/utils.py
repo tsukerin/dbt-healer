@@ -7,7 +7,7 @@ from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from common.config import GITHUB_USERNAME, REPO_NAME, GITHUB_TOKEN, BOT_TOKEN, DB_USERNAME, DB_PASSWORD, DBT_PROJECT_NAME
+from common.config import GITHUB_USERNAME, REPO_NAME, GITHUB_TOKEN, BOT_TOKEN, DB_USERNAME, DB_PASSWORD, DB_DATABASE
 
 def get_last_pr():
     url = f"https://api.github.com/repos/{GITHUB_USERNAME}/{REPO_NAME}/pulls"
@@ -21,7 +21,7 @@ def get_last_pr():
     return data
 
 async def notify_about_pr():
-    conn = await asyncpg.connect(database=DBT_PROJECT_NAME, user=DB_USERNAME, password=DB_PASSWORD)
+    conn = await asyncpg.connect(database=DB_DATABASE, user=DB_USERNAME, password=DB_PASSWORD)
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     last_pr = get_last_pr()[0]['html_url']
 
