@@ -21,7 +21,7 @@ def get_last_pr():
 
     return data
 
-async def notify_about_pr():
+async def notify_about_pr(files: str) -> None:
     conn = await asyncpg.connect(database=DB_DATABASE, user=DB_USERNAME, password=DB_PASSWORD)
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     last_pr = get_last_pr()[0]['html_url']
@@ -30,7 +30,11 @@ async def notify_about_pr():
         async with conn.transaction(): 
             async for id in conn.cursor("select tid from meta.ids"):
                 try:
-                    await bot.send_message(chat_id=id['tid'], text=f"Новый PR!\nURL: {last_pr}")
+                    await bot.send_message(chat_id=id['tid'], 
+                                           text=f"""
+                                           При попытке теста обновленных моделей найдены ошибки в файлах {files}
+                                           \nPR с предположительным решением ошибки: {last_pr}"""
+                                        )
                 except TelegramBadRequest as e:
                     if 'chat not found' in str(e):
                         print(f"Чат с id {id} не найден. Пропускаю...")

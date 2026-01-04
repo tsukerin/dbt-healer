@@ -32,6 +32,7 @@ async def main() -> None:
 
     client = Github(auth=github.Auth.Token(GITHUB_TOKEN))
     repo = client.get_repo(f"{GITHUB_USERNAME}/{REPO_NAME}")
+    files = ', '.join([part[1] for part in extract_solution_parts(solution)])
 
     branch_name = create_branch(repo, BASE_BRANCH)
 
@@ -46,11 +47,11 @@ async def main() -> None:
             print(f"GitHub API error: {exc.status} - {exc.data.get('message', '')}")
             raise
 
-    pr = create_pull_request(repo, branch_name, ', '.join([part[1] for part in extract_solution_parts(solution)]))
+    pr = create_pull_request(repo, branch_name, files)
     print(pr.id)
     print("Pull request created successfully.")
 
-    await notify_about_pr()
+    await notify_about_pr(files)
 
 
 if __name__ == "__main__":

@@ -37,7 +37,7 @@ def send_for_llm(context: str, file: str) -> str:
                 Frame all proposed changes within <solution> tags. Always provide only one solution. Do not explain the solution in excessive detail.
                 If the error is related to database content, start with DB_ERROR, then provide SQL instructions for correction.
                 DO NOT USE CODE that places in shops_dwh/target/*.
-                DO NOT TOUCH CONFIG if error is not related to it.
+                DO NOT TOUCH config() if error is not related to it.
                 EDIT ONLY THE CODE THAT COMES AFTER "SOURCE filename:".
                 IF THERE ARE SEVERAL FILES, WRITE SEVERAL SOLUTIONS LIKE IN [Response Format]. SEPARATE THEM WITH '----' FORMAT.
             </Instruction>
