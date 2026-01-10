@@ -2,8 +2,6 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / '.env')
 
 DBT_PROJECT_NAME = os.getenv('DBT_PROJECT_NAME')
@@ -16,6 +14,8 @@ BASE_BRANCH = os.getenv('BASE_BRANCH')
 DB_USERNAME = os.getenv('DB_USERNAME')
 DB_PASSWORD = os.getenv('DB_PASSWORD') 
 DB_DATABASE = os.getenv('DB_DATABASE')
+
+REPO_ROOT = Path.home() / ".failedrepo" / REPO_NAME
 
 LOGS_FILE = REPO_ROOT / 'logs' / 'err_hashes.txt'
 DBT_LOG = REPO_ROOT / DBT_PROJECT_NAME / 'logs' / 'dbt.log'
