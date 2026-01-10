@@ -2,7 +2,7 @@ from google import genai
 from google.genai import types
 import os
 
-from healer.utils import get_file_context, get_context_log
+from app.utils import get_file_context, get_context_log
 
 client = genai.Client(api_key=os.getenv('API_KEY'))
 

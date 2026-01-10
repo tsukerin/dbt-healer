@@ -11,7 +11,7 @@ from common.config import (
     GITHUB_USERNAME,
 )
 
-from healer.pusher import (
+from app.push_repo import (
     extract_solution_parts,
     build_repo_file_path,
     create_branch,
@@ -19,8 +19,8 @@ from healer.pusher import (
     create_pull_request,
 )
 
-from healer.core import get_solution
-from healer.utils import scan_hashes
+from app.core import get_solution
+from app.utils import scan_hashes
 from notifier.utils import notify_about_pr
 
 
@@ -32,7 +32,7 @@ async def main() -> None:
 
     client = Github(auth=github.Auth.Token(GITHUB_TOKEN))
     repo = client.get_repo(f"{GITHUB_USERNAME}/{REPO_NAME}")
-    files = ', '.join([part[1] for part in extract_solution_parts(solution)])
+    files = ', '.join([part[1].strip('\n') for part in extract_solution_parts(solution)])
 
     branch_name = create_branch(repo, BASE_BRANCH)
 
@@ -58,5 +58,9 @@ if __name__ == "__main__":
     LOGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     LOGS_FILE.touch(exist_ok=True)
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
+
     asyncio.run(main())
