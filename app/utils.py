@@ -87,6 +87,3 @@ def get_changed_files(path: Path=REPO_ROOT, mode: str='debug') -> list[Path]:
     repo.close()
     
     return changed
-
-def get_dbt_cmds():
-    return 'dbt run --models ' + ', '.join([file for file in get_changed_files(mode='prod')])
