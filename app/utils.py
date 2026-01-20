@@ -49,10 +49,6 @@ def get_file_context(files: list) -> str:
     sources = []
 
     for file in files:
-        if '<db_error>' in files:
-            sources.append('<db_error>')
-            continue
-
         for path in Path('.').rglob(file):
             if 'target' not in path.parts and path.is_file():
                 with open(path) as f:
