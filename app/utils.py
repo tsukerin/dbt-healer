@@ -19,7 +19,7 @@ def scan_hashes() -> None:
                     if h not in err_lines:
                         err.write(h)
 
-def get_context_log() -> list[str]:
+def get_context_log() -> str:
     """Retrieve the context log based on the last stored error hash."""
     with LOGS_FILE.open('r', encoding='utf-8') as err:
         lines = err.read().splitlines(True)
@@ -42,16 +42,16 @@ def get_context_log() -> list[str]:
             if is_found and line.strip():
                 context_log.append(line.strip())
     
-    return context_log
+    return '\n'.join(context_log)
 
-def get_file_context(files: list) -> str:
+def get_file_context(files: list[str]) -> str:
     path = None
     sources = []
 
     for file in files:
         for path in Path('.').rglob(file):
             if 'target' not in path.parts and path.is_file():
-                with open(path) as f:
+                with open(path, encoding="utf-8") as f:
                     sources.append(f'SOURCE OF {str(path)}: {f.read()}')
 
     return '\n'.join(sources)
@@ -83,3 +83,14 @@ def get_changed_files(path: Path=REPO_ROOT, mode: str='debug') -> list[Path]:
     repo.close()
     
     return changed
+
+def get_instruction(name: str) -> str:
+    """
+    Get available insturctions:
+    - handle_solution
+    - handle_error_file
+    """
+    path = Path(__file__).resolve().parents[1] / "common" / "instructions"
+
+    with open(path / f"{name}.md", mode="r", encoding="utf-8") as f:
+        return ' '.join(f.readlines())

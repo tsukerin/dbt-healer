@@ -7,3 +7,5 @@ __pycache__/
 
 airflow/config/
 airflow/plugins/
+
+.vscode/

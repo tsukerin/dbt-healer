@@ -22,15 +22,17 @@ from app.push_repo import (
     create_pull_request,
 )
 
-from app.core import get_solution
-from app.utils import scan_hashes
+from app.utils import scan_hashes, get_file_context, get_context_log
 from notifier.utils import notify_about_pr
+from app.providers import GoogleAI
 
 
 async def main() -> None:
     """Orchestrate solution retrieval, commit, and PR creation."""
     scan_hashes()
-    solution = get_solution()
+    context = get_context_log()
+    model = GoogleAI(context)
+    solution = model.get_solution()
     logging.info(solution)
 
     client = Github(auth=github.Auth.Token(GITHUB_TOKEN))
