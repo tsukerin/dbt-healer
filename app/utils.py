@@ -44,15 +44,31 @@ def get_context_log() -> str:
     
     return '\n'.join(context_log)
 
-def get_file_context(files: list[str]) -> str:
-    path = None
+def get_file_context(files: list[str] | str) -> str:
     sources = []
 
+    if isinstance(files, str):
+        files = [files]
+
     for file in files:
-        for path in Path('.').rglob(file):
+        raw = Path(file)
+        if raw.is_absolute() or raw.exists():
+            paths = [raw]
+        else:
+            try:
+                paths = list(Path('.').rglob(file))
+            except ValueError:
+                paths = [raw]
+
+        for path in paths:
             if 'target' not in path.parts and path.is_file():
-                with open(path, encoding="utf-8") as f:
-                    sources.append(f'SOURCE OF {str(path)}: {f.read()}')
+                try:
+                    with open(path, encoding="utf-8") as f:
+                        text = f.read()
+                except UnicodeDecodeError:
+                    with open(path, encoding="utf-8", errors="replace") as f:
+                        text = f.read()
+                sources.append(f'SOURCE OF {str(path)}: {text}')
 
     return '\n'.join(sources)
 

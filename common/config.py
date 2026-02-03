@@ -4,8 +4,10 @@ from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / '.env')
 
+GOOGLEAI_API_KEY = os.getenv('GOOGLEAI_API_KEY')
+POLLINATIONS_API_KEY = os.getenv('POLLINATIONS_API_KEY')
+
 DBT_PROJECT_NAME = os.getenv('DBT_PROJECT_NAME')
-API_KEY = os.getenv('API_KEY')
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 GITHUB_USERNAME = os.getenv('GITHUB_USERNAME')

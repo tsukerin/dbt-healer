@@ -9,3 +9,5 @@ airflow/config/
 airflow/plugins/
 
 .vscode/
+
+business_context.md

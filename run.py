@@ -24,14 +24,14 @@ from app.push_repo import (
 
 from app.utils import scan_hashes, get_file_context, get_context_log
 from notifier.utils import notify_about_pr
-from app.providers import GoogleAI
+from app.providers import GoogleAI, Ollama
 
 
 async def main() -> None:
     """Orchestrate solution retrieval, commit, and PR creation."""
     scan_hashes()
     context = get_context_log()
-    model = GoogleAI(context)
+    model = Ollama(context)
     solution = model.get_solution()
     logging.info(solution)
 
@@ -66,33 +66,33 @@ if __name__ == "__main__":
     workdir = Path(Path.home() / ".failedrepo")
     workdir.mkdir(parents=True, exist_ok=True)
 
-    repo = sys.argv[1]
-    commit_hash = sys.argv[2]
-    dbt_path = sys.argv[3]
+    # repo = sys.argv[1]
+    # commit_hash = sys.argv[2]
+    # dbt_path = sys.argv[3]
 
-    repo_name = repo.split("/")[-1].replace(".git", "")
-    repo_dir = workdir / repo_name
+    # repo_name = repo.split("/")[-1].replace(".git", "")
+    # repo_dir = workdir / repo_name
 
-    if not repo_dir.exists():
-        subprocess.run(
-            ["git", "clone", "--depth", "1", repo],
-            cwd=workdir,
-        )
+    # if not repo_dir.exists():
+    #     subprocess.run(
+    #         ["git", "clone", "--depth", "1", repo],
+    #         cwd=workdir,
+    #     )
 
-    subprocess.run(
-        ["git", "fetch", "origin", commit_hash],
-        cwd=repo_dir,
-    )
+    # subprocess.run(
+    #     ["git", "fetch", "origin", commit_hash],
+    #     cwd=repo_dir,
+    # )
 
-    subprocess.run(
-        ["git", "checkout", commit_hash],
-        cwd=repo_dir,
-    )
+    # subprocess.run(
+    #     ["git", "checkout", commit_hash],
+    #     cwd=repo_dir,
+    # )
 
-    dbt_proj = repo_dir / dbt_path
+    # dbt_proj = repo_dir / dbt_path
 
-    if not dbt_proj.exists():
-        raise RuntimeError(f"DBT project not found at {dbt_proj}")
+    # if not dbt_proj.exists():
+    #     raise RuntimeError(f"DBT project not found at {dbt_proj}")
 
     logging.basicConfig(
         level=logging.INFO,
