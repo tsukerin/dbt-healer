@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / '.env')
 
 GOOGLEAI_API_KEY = os.getenv('GOOGLEAI_API_KEY')
-POLLINATIONS_API_KEY = os.getenv('POLLINATIONS_API_KEY')
+OLLAMA_API_KEY = os.getenv('OLLAMA_API_KEY')
 
 DBT_PROJECT_NAME = os.getenv('DBT_PROJECT_NAME')
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')

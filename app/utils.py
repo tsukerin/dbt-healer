@@ -1,5 +1,6 @@
 from pathlib import Path
 from git import Repo
+import subprocess
 from common.config import REPO_ROOT, LOGS_FILE, DBT_LOG
 import logging
 
@@ -56,7 +57,7 @@ def get_file_context(files: list[str] | str) -> str:
             paths = [raw]
         else:
             try:
-                paths = list(Path('.').rglob(file))
+                paths = list(Path(REPO_ROOT).rglob(file))
             except ValueError:
                 paths = [raw]
 
@@ -68,7 +69,9 @@ def get_file_context(files: list[str] | str) -> str:
                 except UnicodeDecodeError:
                     with open(path, encoding="utf-8", errors="replace") as f:
                         text = f.read()
-                sources.append(f'SOURCE OF {str(path)}: {text}')
+                
+                diff = subprocess.run(["git", "diff", "HEAD^", str(path)], text=True, capture_output=True).stdout
+                sources.append(f'SOURCE OF {str(path)}: {text} \n---\n FILE DIFF: {diff}')
 
     return '\n'.join(sources)
 
@@ -84,14 +87,13 @@ def get_changed_files(path: Path=REPO_ROOT, mode: str='debug') -> list[Path]:
         for item in diff:
             file = item.a_path
             print(f"Changed file: {file}")
-
-            changed.append(Path(item.a_path).stem) if 'sql' in file else None
+            changed.append(Path(item.a_path).stem) if '.sql' in file else None
 
     elif mode == 'prod':
         diff_index = repo.commit("HEAD").diff("origin/master")
 
         for d in diff_index:
-            changed.append(Path(d.a_path).stem) if d.change_type != 'D' else None
+            changed.append(Path(d.a_path).stem) if d.change_type != 'D' and '.sql' in d.a_path else None
 
     if changed:
         logging.info("Changed files detected: " + ", ".join([str(file) for file in changed]))
