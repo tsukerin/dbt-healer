@@ -39,22 +39,23 @@ async def main() -> None:
     repo = client.get_repo(f"{GITHUB_USERNAME}/{REPO_NAME}")
     files = ', '.join([part[1].strip('\n') for part in extract_solution_parts(solution)])
 
-    branch_name = create_branch(repo, BASE_BRANCH)
+    if files:
+        branch_name = create_branch(repo, BASE_BRANCH)
 
-    for part in extract_solution_parts(solution):
-        solution_content, solution_file = part[0], part[1]
-        file_path = build_repo_file_path(solution_file)
+        for part in extract_solution_parts(solution):
+            solution_content, solution_file = part[0], part[1]
+            file_path = build_repo_file_path(solution_file)
 
-        try:
-            print(f"Accessing file: {file_path}")
-            update_file_in_branch(repo, file_path, solution_content, branch_name)
-        except github.GithubException as exc:
-            print(f"GitHub API error: {exc.status} - {exc.data.get('message', '')}")
-            raise
+            try:
+                print(f"Accessing file: {file_path}")
+                update_file_in_branch(repo, file_path, solution_content, branch_name)
+            except github.GithubException as exc:
+                print(f"GitHub API error: {exc.status} - {exc.data.get('message', '')}")
+                raise
 
-    pr = create_pull_request(repo, branch_name, files)
-    print(pr.id)
-    print("Pull request created successfully.")
+        pr = create_pull_request(repo, branch_name, files)
+        print(pr.id)
+        print("Pull request created successfully.")
 
     await notify_about_pr(files)
 

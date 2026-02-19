@@ -29,15 +29,21 @@ async def notify_about_pr(files: str) -> None:
     try:
         async with conn.transaction(): 
             async for id in conn.cursor("select tid from meta.ids"):
-                try:
+                if files:
+                    try:
+                        await bot.send_message(chat_id=id['tid'], 
+                                            text=f"""
+                                            При попытке теста обновленных моделей найдены ошибки в файлах {files}
+                                            \nPR с предположительным решением ошибки: {last_pr}"""
+                                            )
+                    except TelegramBadRequest as e:
+                        if 'chat not found' in str(e):
+                            print(f"Чат с id {id['tid']} не найден. Пропускаю...")
+                else:
                     await bot.send_message(chat_id=id['tid'], 
-                                           text=f"""
-                                           При попытке теста обновленных моделей найдены ошибки в файлах {files}
-                                           \nPR с предположительным решением ошибки: {last_pr}"""
-                                        )
-                except TelegramBadRequest as e:
-                    if 'chat not found' in str(e):
-                        print(f"Чат с id {id} не найден. Пропускаю...")
+                                            text=f"""
+                                            Упал пайплайн при попытке сборки коммита с обновленными моделями"""
+                                            )
     finally:
         await bot.session.close()
     
