@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+
+          if [[ -f requirements.txt ]]; then
+            pip install -r requirements.txt
+          else
+            echo "requirements.txt not found, skipping dependency install."
+          fi
+
+      - name: Validate Python syntax
+        run: python -m compileall app common notifier service run.py
+
+      - name: Run tests if present
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -d tests ]]; then
+            pip install pytest
+            pytest -q
+          else
+            echo "tests directory not found, skipping tests."
+          fi

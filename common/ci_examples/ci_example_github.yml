@@ -1,0 +1,95 @@
+name: deploy
+
+on:
+  push:
+  
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: <db-user>
+          POSTGRES_PASSWORD: <db-password>
+          POSTGRES_DB: <db-name>
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U <db-user>"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get last commit hash
+        id: get-hash
+        run: |
+          COMMIT_HASH=$(git log --oneline -1 --pretty=format:"%h")
+          echo "commit_hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Set dbt profiles dir
+        run: echo "DBT_PROFILES_DIR=$GITHUB_WORKSPACE/<dbt-project-path>" >> $GITHUB_ENV
+
+      - name: Install dbt deps
+        run: |
+          cd <dbt-project-path>
+          dbt deps
+
+      - name: Build dbt project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+
+          if [[ "$BEFORE" =~ ^0+$ ]]; then
+            git fetch origin <base-branch> --depth=1
+            DIFF_RANGE="origin/<base-branch>...$AFTER"
+          else
+            DIFF_RANGE="$BEFORE $AFTER"
+          fi
+
+          CHANGED_FILES=$(git diff --name-only $DIFF_RANGE -- '<dbt-project-path>/**' || true)
+          echo "$CHANGED_FILES"
+
+          if echo "$CHANGED_FILES" | grep -Eq '^<dbt-project-path>/(macros/|seeds/|snapshots/|dbt_project\.yml|packages\.yml)'; then
+            echo "macros, seeds or snapshots changes detected. starting full build..."
+            cd <dbt-project-path>
+            dbt build --profile ci --target ci
+            exit 0
+          fi
+
+          CHANGED_MODELS=$(
+            echo "$CHANGED_FILES" \
+            | grep -E '^<dbt-project-path>/models/.*\.sql$' \
+            | sed -E 's#.*/##; s/\.sql$//' \
+            | xargs || true
+          )
+
+          cd <dbt-project-path>
+          if [[ -n "${CHANGED_MODELS:-}" ]]; then
+            echo "changed models found. get started..."
+            dbt build --profile ci --target ci --select $CHANGED_MODELS
+          else
+            echo "changed models not found. get started full build..."
+            dbt build --profile ci --target ci
+          fi
+
+      - name: Push failure to healer
+        if: failure()
+        run: |
+          curl -X 'POST' \
+          '<analyze-endpoint>' \
+          -F "repo=<github-link>" \
+          -F "commit_hash=${{ steps.get-hash.outputs.commit_hash }}" \
+          -F "dbt_path=<dbt-project-path>" \
+          -F "log_file=@<dbt-project-path>/logs/dbt.log"

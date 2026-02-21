@@ -52,11 +52,9 @@ class AbstractProvider(ABC):
         return get_instruction(name) 
     
 class GoogleAIProvider(AbstractProvider):
-    _client = genai.Client(api_key=GOOGLEAI_API_KEY)
-
     @property
     def client(self):
-        return self._client
+        return genai.Client(api_key=GOOGLEAI_API_KEY)
 
     def __init__(self, context):
         super().__init__(context)
@@ -88,14 +86,13 @@ class GoogleAIProvider(AbstractProvider):
         return response.text
     
 class OllamaProvider(AbstractProvider):
-    _client = Client(
-        host="https://ollama.com",
-        headers={'Authorization': 'Bearer ' + OLLAMA_API_KEY}
-    )
 
     @property
     def client(self):
-        return self._client
+        return Client(
+                    host="https://ollama.com",
+                    headers={'Authorization': 'Bearer ' + OLLAMA_API_KEY}
+                )
 
     def __init__(self, context):
         super().__init__(context)
@@ -134,7 +131,6 @@ class OllamaProvider(AbstractProvider):
         text = self._normalize_model_output(file.message.content)
         res = self._extract_file_names(text)
         if not res:
-            # Fallback: keep first non-empty line as single candidate.
             first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
             if first_line:
                 res = [first_line]
