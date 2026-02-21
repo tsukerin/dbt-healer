@@ -8,7 +8,7 @@ PATH = str(Path(__file__).resolve().parents[1])
 
 sys.path.append(PATH)
 
-from common.config import DBT_LOG
+from common.config import DBT_LOG, REPO_ROOT, DBT_PROJECT_NAME
 
 app = FastAPI()
 
@@ -37,6 +37,7 @@ def analyze(
     dbt_path: str = Form(...),
     log_file: UploadFile = File(...),
 ):
+    DBT_LOG.parent.mkdir(parents=True, exist_ok=True)
 
     with open(DBT_LOG, "wb") as f:
         f.write(log_file.file.read())
