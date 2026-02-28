@@ -9,9 +9,10 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
-from common.config import BOT_TOKEN, DBT_PROJECT_NAME, DB_USERNAME, DB_PASSWORD
+from common.config import get_config
 
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+config = get_config()
+bot = Bot(token=config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
 @dp.message(CommandStart())
@@ -20,7 +21,12 @@ async def command_start_handler(message: Message) -> None:
     This handler receives messages with `/start` command and adding users to db table
     """
 
-    conn = await asyncpg.connect(database=DBT_PROJECT_NAME, user=DB_USERNAME, password=DB_PASSWORD)
+    conn = await asyncpg.connect(
+        database=config.dbt_project_name,
+        port=config.db_port,
+        user=config.db_username,
+        password=config.db_password,
+    )
     await conn.execute(
         f"insert into meta.ids (tid) values ($1) on conflict on constraint ids_tid_key do nothing;",
         str(message.chat.id)

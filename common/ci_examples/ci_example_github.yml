@@ -10,13 +10,13 @@ jobs:
       postgres:
         image: postgres:15
         env:
-          POSTGRES_USER: <db-user>
-          POSTGRES_PASSWORD: <db-password>
-          POSTGRES_DB: <db-name>
+          POSTGRES_USER: {db_user}
+          POSTGRES_PASSWORD: {db_password}
+          POSTGRES_DB: {db_name}
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U <db-user>"
+          --health-cmd "pg_isready -U {db_user}"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -36,11 +36,11 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Set dbt profiles dir
-        run: echo "DBT_PROFILES_DIR=$GITHUB_WORKSPACE/<dbt-project-path>" >> $GITHUB_ENV
+        run: echo "DBT_PROFILES_DIR=$GITHUB_WORKSPACE/{dbt_project_path}" >> $GITHUB_ENV
 
       - name: Install dbt deps
         run: |
-          cd <dbt-project-path>
+          cd {dbt_project_path}
           dbt deps
 
       - name: Build dbt project
@@ -52,30 +52,30 @@ jobs:
           AFTER="${{ github.sha }}"
 
           if [[ "$BEFORE" =~ ^0+$ ]]; then
-            git fetch origin <base-branch> --depth=1
-            DIFF_RANGE="origin/<base-branch>...$AFTER"
+            git fetch origin {base_branch} --depth=1
+            DIFF_RANGE="origin/{base_branch}...$AFTER"
           else
             DIFF_RANGE="$BEFORE $AFTER"
           fi
 
-          CHANGED_FILES=$(git diff --name-only $DIFF_RANGE -- '<dbt-project-path>/**' || true)
+          CHANGED_FILES=$(git diff --name-only $DIFF_RANGE -- '{dbt_project_path}/**' || true)
           echo "$CHANGED_FILES"
 
-          if echo "$CHANGED_FILES" | grep -Eq '^<dbt-project-path>/(macros/|seeds/|snapshots/|dbt_project\.yml|packages\.yml)'; then
+          if echo "$CHANGED_FILES" | grep -Eq '^{dbt_project_path}/(macros/|seeds/|snapshots/|dbt_project\.yml|packages\.yml)'; then
             echo "macros, seeds or snapshots changes detected. starting full build..."
-            cd <dbt-project-path>
+            cd {dbt_project_path}
             dbt build --profile ci --target ci
             exit 0
           fi
 
           CHANGED_MODELS=$(
             echo "$CHANGED_FILES" \
-            | grep -E '^<dbt-project-path>/models/.*\.sql$' \
+            | grep -E '^{dbt_project_path}/models/.*\.sql$' \
             | sed -E 's#.*/##; s/\.sql$//' \
             | xargs || true
           )
 
-          cd <dbt-project-path>
+          cd {dbt_project_path}
           if [[ -n "${CHANGED_MODELS:-}" ]]; then
             echo "changed models found. get started..."
             dbt build --profile ci --target ci --select $CHANGED_MODELS
@@ -88,8 +88,8 @@ jobs:
         if: failure()
         run: |
           curl -X 'POST' \
-          '<analyze-endpoint>' \
-          -F "repo=<github-link>" \
+          '{analyze_endpoint}' \
+          -F "repo={github_link}" \
           -F "commit_hash=${{ steps.get-hash.outputs.commit_hash }}" \
-          -F "dbt_path=<dbt-project-path>" \
-          -F "log_file=@<dbt-project-path>/logs/dbt.log"
+          -F "dbt_path={dbt_project_path}" \
+          -F "log_file=@{dbt_project_path}/logs/dbt.log"

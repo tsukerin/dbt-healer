@@ -1,5 +1,4 @@
 import asyncio
-import os
 import requests
 import asyncpg
 
@@ -8,12 +7,14 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 
-from common.config import GITHUB_USERNAME, REPO_NAME, GITHUB_TOKEN, BOT_TOKEN, DB_USERNAME, DB_PASSWORD, DB_DATABASE
+from common.config import get_config
+
+config = get_config()
 
 def get_last_pr():
-    url = f"https://api.github.com/repos/{GITHUB_USERNAME}/{REPO_NAME}/pulls"
+    url = f"https://api.github.com/repos/{config.github_name}/{config.github_repo}/pulls"
     headers = {}
-    headers['Authorization'] = f'token {GITHUB_TOKEN}'
+    headers['Authorization'] = f'token {config.github_token}'
 
     response = requests.get(url, headers=headers)
     response.raise_for_status()
@@ -22,8 +23,13 @@ def get_last_pr():
     return data
 
 async def notify_about_pr(files: str) -> None:
-    conn = await asyncpg.connect(database=DB_DATABASE, user=DB_USERNAME, password=DB_PASSWORD)
-    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    conn = await asyncpg.connect(
+        database=config.db_database,
+        user=config.db_username,
+        password=config.db_password,
+        port=config.db_port,
+    )
+    bot = Bot(token=config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     last_pr = get_last_pr()[0]['html_url']
 
     try:

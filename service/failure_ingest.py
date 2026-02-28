@@ -8,7 +8,9 @@ PATH = str(Path(__file__).resolve().parents[1])
 
 sys.path.append(PATH)
 
-from common.config import DBT_LOG, REPO_ROOT, DBT_PROJECT_NAME
+from common.config import get_config
+
+config = get_config()
 
 app = FastAPI()
 
@@ -37,16 +39,20 @@ def analyze(
     dbt_path: str = Form(...),
     log_file: UploadFile = File(...),
 ):
-    DBT_LOG.parent.mkdir(parents=True, exist_ok=True)
+    config.dbt_log.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(DBT_LOG, "wb") as f:
+    with open(config.dbt_log, "wb") as f:
         f.write(log_file.file.read())
 
-    background_tasks.add_task(
-        upload_failure,
-        repo,
-        commit_hash,
-        dbt_path,
-    )
-
-    return {"status": "accepted"}
+    try:
+        background_tasks.add_task(
+            upload_failure,
+            repo,
+            commit_hash,
+            dbt_path,
+        )
+        
+        return {"status": "accepted"}
+    except Exception as e:
+        logging.error(f"Error processing failure: {e}")
+        return {"status": "error", "message": str(e)}

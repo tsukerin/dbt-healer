@@ -6,13 +6,7 @@ import asyncio
 import subprocess
 from pathlib import Path
 
-from common.config import (
-    LOGS_FILE, 
-    GITHUB_TOKEN, 
-    REPO_NAME, 
-    BASE_BRANCH, 
-    GITHUB_USERNAME,
-)
+from common.config import get_config
 
 from app.push_repo import (
     extract_solution_parts,
@@ -26,6 +20,8 @@ from app.utils import scan_hashes, get_file_context, get_context_log
 from notifier.utils import notify_about_pr
 from app.providers import GoogleAIProvider, OllamaProvider
 
+config = get_config()
+
 
 async def main() -> None:
     """Orchestrate solution retrieval, commit, and PR creation."""
@@ -35,12 +31,12 @@ async def main() -> None:
     solution = model.get_solution()
     logging.info(solution)
 
-    client = Github(auth=github.Auth.Token(GITHUB_TOKEN))
-    repo = client.get_repo(f"{GITHUB_USERNAME}/{REPO_NAME}")
+    client = Github(auth=github.Auth.Token(config.github_token))
+    repo = client.get_repo(f"{config.github_name}/{config.github_repo}")
     files = ', '.join([part[1].strip('\n') for part in extract_solution_parts(solution)])
 
     if files:
-        branch_name = create_branch(repo, BASE_BRANCH)
+        branch_name = create_branch(repo, config.base_branch)
 
         for part in extract_solution_parts(solution):
             solution_content, solution_file = part[0], part[1]
@@ -61,8 +57,8 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    LOGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    LOGS_FILE.touch(exist_ok=True)
+    config.logs_file.parent.mkdir(parents=True, exist_ok=True)
+    config.logs_file.touch(exist_ok=True)
 
     workdir = Path(Path.home() / ".failedrepo")
     workdir.mkdir(parents=True, exist_ok=True)

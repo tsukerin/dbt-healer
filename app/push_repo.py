@@ -5,7 +5,9 @@ from typing import Tuple
 import logging
 import github
 
-from common.config import BASE_BRANCH, DBT_PROJECT_NAME
+from common.config import get_config
+
+config = get_config()
 
 def extract_solution_parts(solution: str) -> Tuple[str, str]:
     """Parse solution content and target file path."""
@@ -29,10 +31,10 @@ def build_repo_file_path(raw_path: str) -> str:
     """Normalize path to repository format."""
     normalized = raw_path.strip().replace("\\", "/")
 
-    if normalized.startswith(DBT_PROJECT_NAME):
+    if config.dbt_project_name and normalized.startswith(config.dbt_project_name):
         return normalized
     
-    return str(Path(DBT_PROJECT_NAME) / normalized).replace("\\", "/")
+    return str(Path(config.dbt_project_name) / normalized).replace("\\", "/")
 
 def create_branch(repo: github.Repository.Repository, base_branch: str) -> str:
     """Create feature branch from base."""
@@ -59,5 +61,5 @@ def create_pull_request(repo: github.Repository.Repository, branch: str, solutio
         title=f"Auto pull request by llm-healer {datetime.now().strftime('%Y%m%d_%H%M%S')}",
         body=f"fix {solution_file}",
         head=branch,
-        base=BASE_BRANCH,
+        base=config.base_branch,
     )

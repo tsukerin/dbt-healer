@@ -1,19 +1,22 @@
 from pathlib import Path
 from git import Repo
 import subprocess
-from common.config import REPO_ROOT, LOGS_FILE, DBT_LOG
 import logging
+
+from common.config import get_config
+
+config = get_config()
 
 def scan_hashes() -> None:
     """Scan dbt log for error hashes and store them in a separate file."""
-    with LOGS_FILE.open('r', encoding='utf-8') as err_:
+    with config.logs_file.open('r', encoding='utf-8') as err_:
         err_lines = err_.read().splitlines(True)
 
-    if not DBT_LOG.exists():
+    if not config.dbt_log.exists():
         return
 
-    with LOGS_FILE.open('a', encoding='utf-8') as err:
-        with DBT_LOG.open('r', encoding='utf-8') as f:
+    with config.logs_file.open('a', encoding='utf-8') as err:
+        with config.dbt_log.open('r', encoding='utf-8') as f:
             for line in f:
                 if '=' * 30 in line and '|' in line:
                     h = line.split('|')[1].replace('=', '').strip() + '\n'
@@ -22,7 +25,7 @@ def scan_hashes() -> None:
 
 def get_context_log() -> str:
     """Retrieve the context log based on the last stored error hash."""
-    with LOGS_FILE.open('r', encoding='utf-8') as err:
+    with config.logs_file.open('r', encoding='utf-8') as err:
         lines = err.read().splitlines(True)
 
     if not lines:
@@ -30,13 +33,13 @@ def get_context_log() -> str:
 
     last_hash = lines[-1].strip()
 
-    if not DBT_LOG.exists():
+    if not config.dbt_log.exists():
         return []
 
     is_found = False
     context_log = []
     
-    with DBT_LOG.open('r', encoding='utf-8') as f:
+    with config.dbt_log.open('r', encoding='utf-8') as f:
         for line in f:
             if last_hash in line:
                 is_found = True
@@ -57,7 +60,7 @@ def get_file_context(files: list[str] | str) -> str:
             paths = [raw]
         else:
             try:
-                paths = list(Path(REPO_ROOT).rglob(file))
+                paths = list(config.repo_root.rglob(file))
             except ValueError:
                 paths = [raw]
 
@@ -75,7 +78,10 @@ def get_file_context(files: list[str] | str) -> str:
 
     return '\n'.join(sources)
 
-def get_changed_files(path: Path=REPO_ROOT, mode: str='debug') -> list[Path]:
+def get_changed_files(path: Path | None = None, mode: str = 'debug') -> list[Path]:
+    if path is None:
+        path = config.repo_root
+
     repo = Repo(path)
     diff = repo.head.commit.diff(None)
     origin = repo.remotes.origin

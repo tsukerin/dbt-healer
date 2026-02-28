@@ -5,8 +5,9 @@ from google import genai
 from google.genai import types
 from ollama import Client, chat, ChatResponse
 
+from common.config import get_config
 
-from common.config import GOOGLEAI_API_KEY, OLLAMA_API_KEY
+config = get_config()
 
 class AbstractProvider(ABC):
     def __init__(self, context):
@@ -54,7 +55,7 @@ class AbstractProvider(ABC):
 class GoogleAIProvider(AbstractProvider):
     @property
     def client(self):
-        return genai.Client(api_key=GOOGLEAI_API_KEY)
+        return genai.Client(api_key=config.googleai_api_key)
 
     def __init__(self, context):
         super().__init__(context)
@@ -91,7 +92,7 @@ class OllamaProvider(AbstractProvider):
     def client(self):
         return Client(
                     host="https://ollama.com",
-                    headers={'Authorization': 'Bearer ' + OLLAMA_API_KEY}
+                    headers={'Authorization': 'Bearer ' + config.ollama_api_key}
                 )
 
     def __init__(self, context):
