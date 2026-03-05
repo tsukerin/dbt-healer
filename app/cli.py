@@ -1,10 +1,9 @@
 import sys
-
+import subprocess
 import typer
 from pathlib import Path
 from rich.markdown import Markdown
 from rich.console import Console
-import textwrap
 import questionary
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -13,25 +12,11 @@ if str(BASE_DIR) not in sys.path:
 
 from common.config import get_config
 
-app = typer.Typer()
 console = Console()
 
-@app.command()
-def main():
-    md = textwrap.dedent("""
-    **DBT Healer CLI**
+app = typer.Typer(help="DBT Healer CLI")
 
-    Available commands:
-    - `dbt-healer setup` - Set up the DBT Healer environment
-    - `dbt-healer health` - Check the health of the DBT project
-    - `dbt-healer server` - Start the DBT Healer server
-                         
-    >For more information on each command, use `dbt-healer [command] --help`
-    """).strip()
-
-    console.print(Markdown(md))
-
-@app.command()
+@app.command(help="Setup your enviroment for dbt-healer")
 def setup():
     config_dict = {}
     dotenv_file = BASE_DIR / ".env"
@@ -81,9 +66,16 @@ def setup():
         console.print("[green]Configuration saved successfully![/green]" \
         "\nIf you want to change any value, you can edit the .env file in the project root directory.")
 
-@app.command()
+@app.command(help="Serve dbt-healer analyzer")
 def serve(port: int = 8888):
     console.print(Markdown(f"Starting **dbt-healer** server on port {port}..."))
+    config = get_config()
+
+    config.save({"service_port": str(port)}) 
+    cmd = ["docker", "compose", "up", "--build"]
+
+    subprocess.run(cmd, check=True)
+
     
 
 if __name__ == "__main__":

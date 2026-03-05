@@ -1,5 +1,6 @@
 from pathlib import Path
 from git import Repo
+from typing import BinaryIO
 import subprocess
 import logging
 
@@ -110,11 +111,38 @@ def get_changed_files(path: Path | None = None, mode: str = 'debug') -> list[Pat
 
 def get_instruction(name: str) -> str:
     """
-    Get available insturctions:
+    Get available instructions:
     - handle_solution
     - handle_error_file
     """
     path = Path(__file__).resolve().parents[1] / "common" / "instructions"
 
     with open(path / f"{name}.md", mode="r", encoding="utf-8") as f:
-        return ' '.join(f.readlines())
+        return f.read()
+
+def clone_repo_from_ci(repo: str, commit_hash: str, dbt_path: str, log_file: BinaryIO) -> None:
+    workdir = Path(Path.home() / ".failedrepo")
+    workdir.mkdir(parents=True, exist_ok=True)
+
+    repo_name = repo.split("/")[-1].replace(".git", "")
+    repo_dir = workdir / repo_name
+
+    auth_repo = repo.replace("https://", f"https://{config.github_name}:{config.github_token}@")
+
+    if not (repo_dir / ".git").exists():
+        subprocess.run(["git", "clone", "--depth", "1", auth_repo], cwd=workdir, check=True)
+    
+    subprocess.run(["git", "fetch", "origin"], cwd=repo_dir, check=True)
+    subprocess.run(["git", "checkout", commit_hash], cwd=repo_dir, check=True)
+
+    config.logs_file.parent.mkdir(parents=True, exist_ok=True)
+    config.logs_file.touch(exist_ok=True)
+    config.dbt_log.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(config.dbt_log, "wb") as f:
+        f.write(log_file.file.read())
+
+    dbt_proj = repo_dir / dbt_path
+
+    if not dbt_proj.exists():
+        raise RuntimeError(f"DBT project not found at {dbt_proj}")

@@ -1,5 +1,9 @@
 import logging
 import sys
+import os
+
+os.environ["GIT_PYTHON_REFRESH"] = "quiet"
+
 import github
 from github import Github
 import asyncio
@@ -31,8 +35,11 @@ async def main() -> None:
     solution = model.get_solution()
     logging.info(solution)
 
+    owner, repo = config.github_name, config.github_repo
+
     client = Github(auth=github.Auth.Token(config.github_token))
-    repo = client.get_repo(f"{config.github_name}/{config.github_repo}")
+    repo = client.get_repo(f"{owner}/{repo}")
+    print(repo)
     files = ', '.join([part[1].strip('\n') for part in extract_solution_parts(solution)])
 
     if files:
@@ -57,40 +64,6 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    config.logs_file.parent.mkdir(parents=True, exist_ok=True)
-    config.logs_file.touch(exist_ok=True)
-
-    workdir = Path(Path.home() / ".failedrepo")
-    workdir.mkdir(parents=True, exist_ok=True)
-
-    repo = sys.argv[1]
-    commit_hash = sys.argv[2]
-    dbt_path = sys.argv[3]
-
-    repo_name = repo.split("/")[-1].replace(".git", "")
-    repo_dir = workdir / repo_name
-
-    if not repo_dir.exists():
-        subprocess.run(
-            ["git", "clone", "--depth", "1", repo],
-            cwd=workdir,
-        )
-
-    subprocess.run(
-        ["git", "fetch", "origin", commit_hash],
-        cwd=repo_dir,
-    )
-
-    subprocess.run(
-        ["git", "checkout", commit_hash],
-        cwd=repo_dir,
-    )
-
-    dbt_proj = repo_dir / dbt_path
-
-    if not dbt_proj.exists():
-        raise RuntimeError(f"DBT project not found at {dbt_proj}")
-
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",

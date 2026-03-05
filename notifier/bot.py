@@ -2,12 +2,17 @@ import asyncio
 import logging
 import sys
 import asyncpg
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher, html
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.types import Message
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from common.config import get_config
 
@@ -22,11 +27,13 @@ async def command_start_handler(message: Message) -> None:
     """
 
     conn = await asyncpg.connect(
+        host='db',
         database=config.dbt_project_name,
-        port=config.db_port,
-        user=config.db_username,
-        password=config.db_password,
+        port=5432,
+        user=config.notifier_db_username,
+        password=config.notifier_db_password,
     )
+    
     await conn.execute(
         f"insert into meta.ids (tid) values ($1) on conflict on constraint ids_tid_key do nothing;",
         str(message.chat.id)

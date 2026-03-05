@@ -24,10 +24,11 @@ def get_last_pr():
 
 async def notify_about_pr(files: str) -> None:
     conn = await asyncpg.connect(
-        database=config.db_database,
-        user=config.db_username,
-        password=config.db_password,
-        port=config.db_port,
+        host='db',
+        database=config.dbt_project_name,
+        user=config.notifier_db_username,
+        password=config.notifier_db_password,
+        port=5432,
     )
     bot = Bot(token=config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     last_pr = get_last_pr()[0]['html_url']

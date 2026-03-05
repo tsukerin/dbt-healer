@@ -85,7 +85,7 @@ class GithubCIGenerator(AbstractCIGenerator):
                 github_link = f"https://github.com/{self.config.github_name}/{self.config.github_repo}.git"
 
             for_replace = {
-                "{analyze_endpoint}": self.config.analyze_endpoint,
+                "{service_endpoint}": self.config.service_endpoint,
                 "{github_link}": github_link,
                 "{dbt_project_path}": self.config.dbt_project_name,
                 "{base_branch}": self.config.base_branch,

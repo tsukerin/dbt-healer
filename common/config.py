@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 import logging
 import re
-
+import os
 from dotenv import set_key
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -31,19 +31,13 @@ class Config(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+    service_port: str = "8888"
 
-    analyze_endpoint: str = "http://localhost:8888/analyze"
-    github_repo_link: str = ""
+    github_repo_link: str = Field(default="", validation_alias="GITHUB_REPO_LINK")
     ai_provider: str = "Ollama"
-    ai_api_key: str = Field(
-        default="",
-        validation_alias=AliasChoices("AI_API_KEY", "GOOGLEAI_API_KEY", "OLLAMA_API_KEY"),
-    )
+    ai_api_key: str = Field(default="", validation_alias="AI_API_KEY")
     github_token: str = ""
-    telegram_bot_token: str = Field(
-        default="",
-        validation_alias=AliasChoices("TELEGRAM_BOT_TOKEN", "BOT_TOKEN"),
-    )
+    telegram_bot_token: str = Field(default="", validation_alias="TELEGRAM_BOT_TOKEN")
     dbt_project_name: str = ""
     base_branch: str = "master"
 
@@ -54,10 +48,15 @@ class Config(BaseSettings):
     db_dbt_port: int = 5432
     db_dbt_schema: str = "dbt_healer"
 
-    db_username: str = "postgres"
-    db_password: str = "postgres"
-    db_database: str = "public"
-    db_port: int = 5432
+    notifier_db_username: str = Field(
+        default="postgres",
+        validation_alias="NOTIFIER_DB_USERNAME")
+    notifier_db_password: str = Field(
+        default="postgres",
+        validation_alias="NOTIFIER_DB_PASSWORD")
+    notifier_db_port: int = Field(
+        default=5432,
+        validation_alias="NOTIFIER_DB_PORT")
 
     @property
     def github_owner_repo(self) -> tuple[str | None, str | None]:
@@ -96,13 +95,16 @@ class Config(BaseSettings):
     @property
     def ollama_api_key(self) -> str:
         return self.ai_api_key
+    
+    @property
+    def service_endpoint(self) -> str:
+        return f"http://localhost:{self.service_port}/analyze/"
 
     def save(self, config_dict: dict[str, str]) -> bool:
         try:
             data = self.model_dump()
             data.update({key: val for key, val in config_dict.items() if val is not None})
 
-            set_key(dotenv_path, "ANALYZE_ENDPOINT", str(data.get("analyze_endpoint", self.analyze_endpoint) or ""))
             set_key(dotenv_path, "GITHUB_REPO_LINK", str(data.get("github_repo_link", self.github_repo_link) or ""))
             set_key(dotenv_path, "AI_PROVIDER", str(data.get("ai_provider", self.ai_provider) or ""))
             set_key(dotenv_path, "AI_API_KEY", str(data.get("ai_api_key", self.ai_api_key) or ""))
@@ -120,10 +122,7 @@ class Config(BaseSettings):
             set_key(dotenv_path, "DB_DBT_PORT", str(data.get("db_dbt_port", self.db_dbt_port) or 5432))
             set_key(dotenv_path, "DB_DBT_SCHEMA", str(data.get("db_dbt_schema", self.db_dbt_schema) or "dbt_healer"))
 
-            set_key(dotenv_path, "DB_USERNAME", str(data.get("db_username", self.db_username) or "postgres"))
-            set_key(dotenv_path, "DB_PASSWORD", str(data.get("db_password", self.db_password) or "postgres"))
-            set_key(dotenv_path, "DB_DATABASE", str(data.get("db_database", self.db_database) or "public"))
-            set_key(dotenv_path, "DB_PORT", str(data.get("db_port", self.db_port) or 5432))
+            set_key(dotenv_path, "SERVICE_PORT", str(data.get("service_port", self.service_port) or "8888"))
 
             ai_provider = str(data.get("ai_provider", self.ai_provider) or "").lower()
             ai_api_key = str(data.get("ai_api_key", self.ai_api_key) or "")
@@ -150,7 +149,7 @@ class Config(BaseSettings):
 
     def __str__(self) -> str:
         return (
-            f"ANALYZE_ENDPOINT: {self.analyze_endpoint}\n"
+            f"SERVICE_ENDPOINT: {self.service_endpoint}\n"
             f"GITHUB_REPO_LINK: {self.github_repo_link}\n"
             f"AI_PROVIDER: {self.ai_provider}\n"
             f"AI_API_KEY: {'***' if self.ai_api_key else None}\n"

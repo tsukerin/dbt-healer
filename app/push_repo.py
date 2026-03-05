@@ -3,6 +3,10 @@ from datetime import datetime
 import re
 from typing import Tuple
 import logging
+import os
+
+os.environ["GIT_PYTHON_REFRESH"] = "quiet"
+
 import github
 
 from common.config import get_config

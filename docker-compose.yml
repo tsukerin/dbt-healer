@@ -1,0 +1,60 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${NOTIFIER_DB_USERNAME}
+      POSTGRES_PASSWORD: ${NOTIFIER_DB_PASSWORD}
+      POSTGRES_DB: ${DBT_PROJECT_NAME:-postgres}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${NOTIFIER_DB_USERNAME} -d ${DBT_PROJECT_NAME:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "${NOTIFIER_DB_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./common/init.sql:/docker-entrypoint-initdb.d/init.sql
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+
+  api:
+    image: dbt-healer-api
+    build:
+      context: .
+      dockerfile: service/Dockerfile
+    env_file:
+      - .env
+    environment:
+      SERVICE_PORT: ${SERVICE_PORT}
+    ports:
+      - "${SERVICE_PORT}:${SERVICE_PORT}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -GET localhost:${SERVICE_PORT}/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  notifier:
+    image: notifier-bot
+    build:
+      context: .
+      dockerfile: notifier/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      NOTIFIER_DB_USERNAME: ${NOTIFIER_DB_USERNAME}
+      NOTIFIER_DB_PASSWORD: ${NOTIFIER_DB_PASSWORD}
+      NOTIFIER_DB_DATABASE: ${DBT_PROJECT_NAME:-postgres}
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+
+
+
+volumes:
+  postgres_data:
