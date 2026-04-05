@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 
 from common.config import Config, get_config
+from common.exceptions import CIFileExistsError, CIProfileExistsError 
 
 
 class AbstractCIGenerator(ABC):
@@ -22,7 +23,7 @@ class AbstractCIGenerator(ABC):
 
     def __init__(self, config: Config | None = None):
         self.config = config or get_config()
-        self.dbt_path = self.config.repo_root / self.config.dbt_project_name
+        self.dbt_path = self.config.full_path_to_repo / self.config.dbt_project_name
 
     def _check_ci_profile(self) -> bool:
         """Checks if dbt profiles.yml exists in the project."""
@@ -35,14 +36,15 @@ class AbstractCIGenerator(ABC):
     def create_ci_profile(self):
         """Creates CI profile for dbt project."""
         if self._check_ci_profile():
-            logging.info("CI profile already exists. Skipping creation.")
-            return
+            logging.warning("CI profile already exists. Skipping creation.")
+            return CIProfileExistsError
 
         ci_profile = (
             "\nci:\n"
             "  target: ci\n"
             "  outputs:\n"
             "    ci:\n"
+            f"      type: {self.config.db_type}\n"
             f"      host: {self.config.db_dbt_host}\n"
             f"      user: {self.config.db_dbt_username}\n"
             f"      password: {self.config.db_dbt_password}\n"
@@ -62,7 +64,7 @@ class AbstractCIGenerator(ABC):
 class GithubCIGenerator(AbstractCIGenerator):
     @property
     def ci_dir(self):
-        return self.dbt_path / ".github" / "workflows"
+        return self.dbt_path.parent / ".github" / "workflows"
     
     @property
     def ci_content(self):
@@ -74,20 +76,16 @@ class GithubCIGenerator(AbstractCIGenerator):
         ci_file.parent.mkdir(parents=True, exist_ok=True)
 
         if ci_file.exists() and len(ci_file.read_text()) > 0:
-            logging.info("CI file already exists. Skipping creation.")
-            return
+            logging.warning("CI file already exists. Skipping creation.")
+            return CIFileExistsError
 
         try:
             content = self.ci_content.read_text(encoding="utf-8")
-            github_link = self.config.github_repo_link
-
-            if not github_link and self.config.github_name and self.config.github_repo:
-                github_link = f"https://github.com/{self.config.github_name}/{self.config.github_repo}.git"
 
             for_replace = {
                 "{service_endpoint}": self.config.service_endpoint,
-                "{github_link}": github_link,
-                "{dbt_project_path}": self.config.dbt_project_name,
+                "{github_link}": self.config.github_repo_link,
+                "{dbt_project_name}": self.config.dbt_project_name,
                 "{base_branch}": self.config.base_branch,
                 "{db_user}": self.config.db_dbt_username,
                 "{db_password}": self.config.db_dbt_password,
@@ -101,6 +99,6 @@ class GithubCIGenerator(AbstractCIGenerator):
                 f.write(content)
         except Exception as e:
             logging.error(f"Failed to create CI file: {e}")
-
+            return Exception(e)
 
         

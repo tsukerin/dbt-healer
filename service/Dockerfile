@@ -7,6 +7,7 @@ ENV SERVICE_PORT=8888
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install dbt-core dbt-postgres
 
 COPY . .
 

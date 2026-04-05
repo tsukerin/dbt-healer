@@ -3,15 +3,24 @@ import logging
 import re
 from google import genai
 from google.genai import types
-from ollama import Client, chat, ChatResponse
+from ollama import Client, chat, ChatResponse, list as local_models
 
-from common.config import get_config
-
-config = get_config()
+from common.config import Config, get_config
+from app.utils import get_file_context, get_instruction
 
 class AbstractProvider(ABC):
-    def __init__(self, context):
+    def __init__(
+        self,
+        context: str | None = None,
+        *,
+        config: Config | None = None,
+        api_key: str | None = None,
+        model: str | None = None,
+    ):
         self.context = context
+        self.config = config or get_config()
+        self.ai_api_key = self.config.ai_api_key if api_key is None else api_key
+        self.model = self.config.ai_model if model is None else model
 
     @property
     @abstractmethod
@@ -28,6 +37,11 @@ class AbstractProvider(ABC):
         """Sends the file name where the error occurs and returns a response"""
         ...
 
+    @abstractmethod
+    def get_models_list(self) -> list[str]:
+        """Provides list of models of current provider"""
+        ...
+
     def get_solution(self) -> str:
         """Gets the final response that contains presumably solution"""
         files = [f.strip() for f in self.get_error_files() if f and f.strip()]
@@ -36,35 +50,24 @@ class AbstractProvider(ABC):
         results = []
 
         for file in files:
-            file_ctx = self._get_file_context(file)
+            file_ctx = get_file_context(file)
             if not file_ctx:
                 logging.warning("No file context found for: %s", file)
                 continue
             results.append(self.send_for_llm(file_ctx))
 
         return "\n----\n".join(results)
-
-    def _get_file_context(self, file: str) -> str:
-        from app.utils import get_file_context
-        return get_file_context(file)
-    
-    def _get_instruction(self, name: str) -> str:
-        from app.utils import get_instruction
-        return get_instruction(name) 
     
 class GoogleAIProvider(AbstractProvider):
     @property
     def client(self):
-        return genai.Client(api_key=config.googleai_api_key)
-
-    def __init__(self, context):
-        super().__init__(context)
+        return genai.Client(api_key=self.ai_api_key)
 
     def get_error_files(self) -> list[str]:
         file = self.client.models.generate_content(
-            model="gemini-2.5-flash",
-            config=types.GenerateContentConfig(
-                system_instruction=self._get_instruction("handle_error_file")),
+                model=self.model,
+                config=types.GenerateContentConfig(
+                system_instruction=self.get_instruction("handle_error_file")),
                 contents=self.context
             )
 
@@ -78,25 +81,25 @@ class GoogleAIProvider(AbstractProvider):
 
     def send_for_llm(self, file_context: str) -> str:
         response = self.client.models.generate_content(
-            model="gemini-2.5-flash",
-            config=types.GenerateContentConfig(
-                system_instruction=self._get_instruction("handle_solution")),
+                model=self.model,
+                config=types.GenerateContentConfig(
+                system_instruction=get_instruction("handle_solution")),
                 contents=self.context + f'\n{file_context}'
             )
 
         return response.text
+        
+    def get_models_list(self):
+        return [model.name for model in self.client.models.list() if model.name]
     
 class OllamaProvider(AbstractProvider):
 
     @property
     def client(self):
         return Client(
-                    host="https://ollama.com",
-                    headers={'Authorization': 'Bearer ' + config.ollama_api_key}
-                )
-
-    def __init__(self, context):
-        super().__init__(context)
+            host="https://ollama.com",
+            headers={'Authorization': 'Bearer ' + self.ai_api_key}
+        )
 
     def _normalize_model_output(self, text: str) -> str:
         if "<think>" in text:
@@ -116,10 +119,10 @@ class OllamaProvider(AbstractProvider):
         return files
 
     def get_error_files(self) -> list[str]:
-        file = self.client.chat(model='gpt-oss:120b-cloud', messages=[
+        file = self.client.chat(model=self.model, messages=[
             {
                 "role": "system",
-                "content": self._get_instruction("handle_error_file")
+                "content": get_instruction("handle_error_file")
             },
             {
                 "role": "user",
@@ -139,10 +142,10 @@ class OllamaProvider(AbstractProvider):
         return res
     
     def send_for_llm(self, file_context: str) -> str:
-        file = self.client.chat(model='gpt-oss:120b-cloud', messages=[
+        file = self.client.chat(model=self.model, messages=[
             {
                 "role": "system",
-                "content": self._get_instruction("handle_solution")
+                "content": get_instruction("handle_solution")
             },
             {
                 "role": "user",
@@ -153,3 +156,6 @@ class OllamaProvider(AbstractProvider):
         res = file.message.content or ""
 
         return self._normalize_model_output(res)
+
+    def get_models_list(self) -> list[str]:
+        return [model["model"] for model in self.client.list()["models"]]

@@ -4,7 +4,7 @@ import logging
 import re
 import os
 from dotenv import set_key
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 dotenv_path = Path(__file__).resolve().parents[1] / ".env"
@@ -32,31 +32,45 @@ class Config(BaseSettings):
         extra="ignore",
     )
     service_port: str = "8888"
+    service_endpoint: str = Field(default="localhost", validation_alias="SERVICE_ENDPOINT")
 
     github_repo_link: str = Field(default="", validation_alias="GITHUB_REPO_LINK")
-    ai_provider: str = "Ollama"
+    ai_provider: str = Field(default="Ollama", validation_alias="AI_PROVIDER")
     ai_api_key: str = Field(default="", validation_alias="AI_API_KEY")
+    ai_model: str = Field(default="", validation_alias="AI_MODEL")
     github_token: str = ""
     telegram_bot_token: str = Field(default="", validation_alias="TELEGRAM_BOT_TOKEN")
     dbt_project_name: str = ""
     base_branch: str = "master"
 
+    full_path_to_repo_str: str = Field(default="", validation_alias="FULL_PATH_TO_REPO")
     db_dbt_host: str = "localhost"
     db_dbt_username: str = "dbt_healer"
     db_dbt_password: str = "dbt_healer"
-    db_dbt_database: str = "dbt_healer"
     db_dbt_port: int = 5432
-    db_dbt_schema: str = "dbt_healer"
+    db_type: str = "postgres"
 
-    notifier_db_username: str = Field(
-        default="postgres",
-        validation_alias="NOTIFIER_DB_USERNAME")
-    notifier_db_password: str = Field(
-        default="postgres",
-        validation_alias="NOTIFIER_DB_PASSWORD")
-    notifier_db_port: int = Field(
-        default=5432,
-        validation_alias="NOTIFIER_DB_PORT")
+    notifier_db_username: str = Field(default="postgres", validation_alias="NOTIFIER_DB_USERNAME")
+    notifier_db_password: str = Field(default="postgres", validation_alias="NOTIFIER_DB_PASSWORD")
+    notifier_db_port: int = Field(default=5432, validation_alias="NOTIFIER_DB_PORT")
+
+    failed_repo_path: Path | None = None
+
+    @field_validator("github_repo_link")
+    @classmethod
+    def normalize_github_link(cls, v: str) -> str:
+        if not v.endswith(".git"):
+            v = v.rstrip("/") + ".git"
+        return v
+    
+    @field_validator("service_endpoint")
+    @classmethod
+    def normalize_service_endpoint(cls, v: str) -> str:
+        if not v.startswith("https://"):
+            v = "https://" + v.rstrip("https://").rstrip("http://")
+        if not v.endswith("/analyze/"):
+            v = v.rstrip("/") + "/analyze/"
+        return v
 
     @property
     def github_owner_repo(self) -> tuple[str | None, str | None]:
@@ -85,60 +99,82 @@ class Config(BaseSettings):
         return self.repo_root / "logs" / "dbt.log"
 
     @property
-    def bot_token(self) -> str:
-        return self.telegram_bot_token
+    def uploaded_dbt_log(self) -> Path:
+        return self.repo_root / "logs" / "payload_dbt.log"
 
     @property
-    def googleai_api_key(self) -> str:
-        return self.ai_api_key
+    def db_dbt_schema(self) -> str:
+        dbt_path = self.full_path_to_repo / self.dbt_project_name
 
-    @property
-    def ollama_api_key(self) -> str:
-        return self.ai_api_key
+        if not self.full_path_to_repo or not self.dbt_project_name:
+            return None
+
+        with open(dbt_path / "profiles.yml", mode="r") as f:
+            lines = f.readlines()
+            schema = re.search(pattern=r'schema:\s*(?P<schema>\S+)', string=''.join(lines))
+        if not schema: 
+            return
+        return schema.group("schema").strip()
     
     @property
-    def service_endpoint(self) -> str:
-        return f"http://localhost:{self.service_port}/analyze/"
+    def db_dbt_database(self) -> str:
+        dbt_path = self.full_path_to_repo / self.dbt_project_name
+
+        if not self.full_path_to_repo or not self.dbt_project_name:
+            return None
+
+        with open(dbt_path / "profiles.yml", mode="r") as f:
+            lines = f.readlines()
+            dbname = re.search(pattern=r'dbname:\s*(?P<database>\S+)', string=''.join(lines))
+        if not dbname: 
+            return
+        return dbname.group("database").strip()
+
+    @property
+    def bot_token(self) -> str:
+        return self.telegram_bot_token
+    
+    @property
+    def full_path_to_repo(self) -> Path:
+        return Path(self.full_path_to_repo_str)
+    
+    @property
+    def path_to_dbt_proj(self) -> Path:
+        return self.full_path_to_repo / self.dbt_project_name
 
     def save(self, config_dict: dict[str, str]) -> bool:
         try:
             data = self.model_dump()
             data.update({key: val for key, val in config_dict.items() if val is not None})
 
-            set_key(dotenv_path, "GITHUB_REPO_LINK", str(data.get("github_repo_link", self.github_repo_link) or ""))
-            set_key(dotenv_path, "AI_PROVIDER", str(data.get("ai_provider", self.ai_provider) or ""))
+            set_key(dotenv_path, "AI_PROVIDER", str(data.get("ai_provider", self.ai_provider) or "Ollama"))
             set_key(dotenv_path, "AI_API_KEY", str(data.get("ai_api_key", self.ai_api_key) or ""))
+            set_key(dotenv_path, "AI_MODEL", str(data.get("ai_model", self.ai_model) or ""))
+
+            set_key(dotenv_path, "GITHUB_REPO_LINK", str(data.get("github_repo_link", self.github_repo_link) or ""))
             set_key(dotenv_path, "GITHUB_TOKEN", str(data.get("github_token", self.github_token) or ""))
+            set_key(dotenv_path, "BASE_BRANCH", str(data.get("base_branch", self.base_branch) or "master"))
+
             set_key(dotenv_path, "TELEGRAM_BOT_TOKEN", str(data.get("telegram_bot_token", self.telegram_bot_token) or ""))
             set_key(dotenv_path, "BOT_TOKEN", str(data.get("telegram_bot_token", self.telegram_bot_token) or ""))
 
+            set_key(dotenv_path, "FULL_PATH_TO_REPO", str(data.get("full_path_to_repo_str", self.full_path_to_repo_str) or ""))
             set_key(dotenv_path, "DBT_PROJECT_NAME", str(data.get("dbt_project_name", self.dbt_project_name) or ""))
-            set_key(dotenv_path, "BASE_BRANCH", str(data.get("base_branch", self.base_branch) or "master"))
-
             set_key(dotenv_path, "DB_DBT_HOST", str(data.get("db_dbt_host", self.db_dbt_host) or "localhost"))
             set_key(dotenv_path, "DB_DBT_USERNAME", str(data.get("db_dbt_username", self.db_dbt_username) or "dbt_healer"))
             set_key(dotenv_path, "DB_DBT_PASSWORD", str(data.get("db_dbt_password", self.db_dbt_password) or "dbt_healer"))
             set_key(dotenv_path, "DB_DBT_DATABASE", str(data.get("db_dbt_database", self.db_dbt_database) or "dbt_healer"))
             set_key(dotenv_path, "DB_DBT_PORT", str(data.get("db_dbt_port", self.db_dbt_port) or 5432))
             set_key(dotenv_path, "DB_DBT_SCHEMA", str(data.get("db_dbt_schema", self.db_dbt_schema) or "dbt_healer"))
+            set_key(dotenv_path, "DB_TYPE", str(data.get("db_type", self.db_type) or "postgres"))
 
+            set_key(dotenv_path, "SERVICE_ENDPOINT", str(data.get("service_endpoint", self.service_endpoint) or "localhost"))
             set_key(dotenv_path, "SERVICE_PORT", str(data.get("service_port", self.service_port) or "8888"))
 
-            ai_provider = str(data.get("ai_provider", self.ai_provider) or "").lower()
-            ai_api_key = str(data.get("ai_api_key", self.ai_api_key) or "")
-
-            google_key = ""
-            ollama_key = ""
-            if "google" in ai_provider:
-                google_key = ai_api_key
-            elif "ollama" in ai_provider:
-                ollama_key = ai_api_key
-            else:
-                google_key = ai_api_key
-                ollama_key = ai_api_key
-
-            set_key(dotenv_path, "GOOGLEAI_API_KEY", google_key)
-            set_key(dotenv_path, "OLLAMA_API_KEY", ollama_key)
+            set_key(dotenv_path, "NOTIFIER_DB_USERNAME", "postgres")
+            set_key(dotenv_path, "NOTIFIER_DB_PASSWORD", "postgres")
+            set_key(dotenv_path, "NOTIFIER_DB_DATABASE", "postgres")
+            set_key(dotenv_path, "NOTIFIER_DB_PORT", "5432")
 
             get_config.cache_clear()
         except Exception as exc:

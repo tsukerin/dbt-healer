@@ -3,21 +3,33 @@ from git import Repo
 from typing import BinaryIO
 import subprocess
 import logging
+import json
 
 from common.config import get_config
 
 config = get_config()
+
+
+def get_failed_repo_path() -> Path:
+    if not config.dbt_project_name:
+        raise RuntimeError("DBT_PROJECT_NAME is not configured")
+
+    failed_repo_path = config.repo_root / config.dbt_project_name
+    if not failed_repo_path.exists():
+        raise RuntimeError(f"DBT project not found at {failed_repo_path}")
+
+    return failed_repo_path
 
 def scan_hashes() -> None:
     """Scan dbt log for error hashes and store them in a separate file."""
     with config.logs_file.open('r', encoding='utf-8') as err_:
         err_lines = err_.read().splitlines(True)
 
-    if not config.dbt_log.exists():
+    if not config.uploaded_dbt_log.exists():
         return
 
     with config.logs_file.open('a', encoding='utf-8') as err:
-        with config.dbt_log.open('r', encoding='utf-8') as f:
+        with config.uploaded_dbt_log.open('r', encoding='utf-8') as f:
             for line in f:
                 if '=' * 30 in line and '|' in line:
                     h = line.split('|')[1].replace('=', '').strip() + '\n'
@@ -34,13 +46,13 @@ def get_context_log() -> str:
 
     last_hash = lines[-1].strip()
 
-    if not config.dbt_log.exists():
+    if not config.uploaded_dbt_log.exists():
         return []
 
     is_found = False
     context_log = []
     
-    with config.dbt_log.open('r', encoding='utf-8') as f:
+    with config.uploaded_dbt_log.open('r', encoding='utf-8') as f:
         for line in f:
             if last_hash in line:
                 is_found = True
@@ -75,7 +87,11 @@ def get_file_context(files: list[str] | str) -> str:
                         text = f.read()
                 
                 diff = subprocess.run(["git", "diff", "HEAD^", str(path)], text=True, capture_output=True).stdout
-                sources.append(f'SOURCE OF {str(path)}: {text} \n---\n FILE DIFF: {diff}')
+                lineage_models = '\n'.join(f"CONTEXT OF {model}:\n{context}" for model, context in parse_lineage_models(file).items())
+                
+                sources.append(f'SOURCE OF {str(path)}: {text} \n FILE DIFF: {diff} \n LINAGE_MODELS: {lineage_models}')
+                
+                print(sources)
 
     return '\n'.join(sources)
 
@@ -137,12 +153,38 @@ def clone_repo_from_ci(repo: str, commit_hash: str, dbt_path: str, log_file: Bin
 
     config.logs_file.parent.mkdir(parents=True, exist_ok=True)
     config.logs_file.touch(exist_ok=True)
-    config.dbt_log.parent.mkdir(parents=True, exist_ok=True)
+    config.uploaded_dbt_log.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(config.dbt_log, "wb") as f:
+    with open(config.uploaded_dbt_log, "wb") as f:
         f.write(log_file.file.read())
 
-    dbt_proj = repo_dir / dbt_path
+    failed_repo_path = repo_dir / dbt_path
+    if not failed_repo_path.exists():
+        raise RuntimeError(f"DBT project not found at {failed_repo_path}")
+    
+    subprocess.run(["dbt", "deps"], cwd=failed_repo_path, check=True)
+    subprocess.run(["dbt", "--show-all-deprecations", "parse"], cwd=failed_repo_path, check=True)
 
-    if not dbt_proj.exists():
-        raise RuntimeError(f"DBT project not found at {dbt_proj}")
+
+def parse_lineage_models(model: str) -> dict[str, str]:
+    failed_repo_path = get_failed_repo_path()
+    with open(failed_repo_path / "target" / "manifest.json", mode="r") as f:
+        manifest = json.load(f)
+
+    model_name = Path(model).stem
+    model_id = f"model.{config.dbt_project_name}.{model_name}"
+    node = manifest["nodes"][model_id]
+    upstream = node["depends_on"]["nodes"]
+    child_map = manifest["child_map"]
+    downstream = child_map.get(model_id, [])
+
+    lineage = set(upstream + downstream)
+    context_models = {}
+
+    for node_id in lineage:
+        node = manifest["nodes"].get(node_id)
+        if node and node["resource_type"] == "model":
+            file_path = failed_repo_path / node["original_file_path"]
+            context_models[node["name"]] = file_path.read_text()
+
+    return context_models

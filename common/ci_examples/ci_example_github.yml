@@ -36,11 +36,11 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Set dbt profiles dir
-        run: echo "DBT_PROFILES_DIR=$GITHUB_WORKSPACE/{dbt_project_path}" >> $GITHUB_ENV
+        run: echo "DBT_PROFILES_DIR=$GITHUB_WORKSPACE/{dbt_project_name}" >> $GITHUB_ENV
 
       - name: Install dbt deps
         run: |
-          cd {dbt_project_path}
+          cd {dbt_project_name}
           dbt deps
 
       - name: Build dbt project
@@ -58,24 +58,24 @@ jobs:
             DIFF_RANGE="$BEFORE $AFTER"
           fi
 
-          CHANGED_FILES=$(git diff --name-only $DIFF_RANGE -- '{dbt_project_path}/**' || true)
+          CHANGED_FILES=$(git diff --name-only $DIFF_RANGE -- '{dbt_project_name}/**' || true)
           echo "$CHANGED_FILES"
 
-          if echo "$CHANGED_FILES" | grep -Eq '^{dbt_project_path}/(macros/|seeds/|snapshots/|dbt_project\.yml|packages\.yml)'; then
+          if echo "$CHANGED_FILES" | grep -Eq '^{dbt_project_name}/(macros/|seeds/|snapshots/|dbt_project\.yml|packages\.yml)'; then
             echo "macros, seeds or snapshots changes detected. starting full build..."
-            cd {dbt_project_path}
+            cd {dbt_project_name}
             dbt build --profile ci --target ci
             exit 0
           fi
 
           CHANGED_MODELS=$(
             echo "$CHANGED_FILES" \
-            | grep -E '^{dbt_project_path}/models/.*\.sql$' \
+            | grep -E '^{dbt_project_name}/models/.*\.sql$' \
             | sed -E 's#.*/##; s/\.sql$//' \
             | xargs || true
           )
 
-          cd {dbt_project_path}
+          cd {dbt_project_name}
           if [[ -n "${CHANGED_MODELS:-}" ]]; then
             echo "changed models found. get started..."
             dbt build --profile ci --target ci --select $CHANGED_MODELS
@@ -85,11 +85,11 @@ jobs:
           fi
 
       - name: Push failure to healer
-        if: failure()
+        if: ${{ failure() && startsWith(github.ref, 'refs/heads/feature/') }}
         run: |
           curl -X 'POST' \
           '{service_endpoint}' \
           -F "repo={github_link}" \
           -F "commit_hash=${{ steps.get-hash.outputs.commit_hash }}" \
-          -F "dbt_path={dbt_project_path}" \
-          -F "log_file=@{dbt_project_path}/logs/dbt.log"
+          -F "dbt_path={dbt_project_name}" \
+          -F "log_file=@{dbt_project_name}/logs/dbt.log"
