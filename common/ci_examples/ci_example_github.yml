@@ -71,7 +71,7 @@ jobs:
           CHANGED_MODELS=$(
             echo "$CHANGED_FILES" \
             | grep -E '^{dbt_project_name}/models/.*\.sql$' \
-            | sed -E 's#.*/##; s/\.sql$//' \
+            | sed -E 's#.*/##; s/\.sql$//; s#^#+#' \
             | xargs || true
           )
 
