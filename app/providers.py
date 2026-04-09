@@ -3,7 +3,7 @@ import logging
 import re
 from google import genai
 from google.genai import types
-from ollama import Client, chat, ChatResponse, list as local_models
+from ollama import Client, chat, ChatResponse
 
 from common.config import Config, get_config
 from app.utils import get_file_context, get_instruction
