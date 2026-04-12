@@ -21,8 +21,8 @@ from app.push_repo import (
 )
 
 from app.utils import scan_hashes, get_file_context, get_context_log
+from app.provider_builder import ProviderType, build_provider
 from notifier.utils import notify_about_pr
-from app.providers import GoogleAIProvider, OllamaProvider
 
 config = get_config()
 
@@ -31,7 +31,7 @@ async def main() -> None:
     """Orchestrate solution retrieval, commit, and PR creation."""
     scan_hashes()
     context = get_context_log()
-    model = OllamaProvider(context)
+    model = build_provider(ai_provider=ProviderType(config.ai_provider), context=context)
     solution = model.get_solution()
     logging.info(solution)
 
@@ -39,7 +39,7 @@ async def main() -> None:
 
     client = Github(auth=github.Auth.Token(config.github_token))
     repo = client.get_repo(f"{owner}/{repo}")
-    print(repo)
+    
     files = ', '.join([part[1].strip('\n') for part in extract_solution_parts(solution)])
 
     if files:
@@ -50,15 +50,15 @@ async def main() -> None:
             file_path = build_repo_file_path(solution_file)
 
             try:
-                print(f"Accessing file: {file_path}")
+                logging.info(f"Accessing file: {file_path}")
                 update_file_in_branch(repo, file_path, solution_content, branch_name)
             except github.GithubException as exc:
-                print(f"GitHub API error: {exc.status} - {exc.data.get('message', '')}")
+                logging.info(f"GitHub API error: {exc.status} - {exc.data.get('message', '')}")
                 raise
 
-        pr = create_pull_request(repo, branch_name, files)
-        print(pr.id)
-        print("Pull request created successfully.")
+        create_pull_request(repo, branch_name, files)
+        
+        logging.info("Pull request created successfully.")
 
     await notify_about_pr(files)
 

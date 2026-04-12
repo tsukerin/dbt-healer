@@ -6,7 +6,6 @@ import os
 from dotenv import set_key
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 dotenv_path = Path(__file__).resolve().parents[1] / ".env"
 
 
@@ -23,7 +22,6 @@ def parse_github_repo_link(repo_link: str | None) -> tuple[str | None, str | Non
         return None, None
 
     return match.group("owner"), match.group("repo")
-
 
 class Config(BaseSettings):
     model_config = SettingsConfigDict(
@@ -66,8 +64,8 @@ class Config(BaseSettings):
     @field_validator("service_endpoint")
     @classmethod
     def normalize_service_endpoint(cls, v: str) -> str:
-        if not v.startswith("https://"):
-            v = "https://" + v.rstrip("https://").rstrip("http://")
+        if v.startswith("http://"):
+            v = "https://" + v.removeprefix("http://")
         if not v.endswith("/analyze/"):
             v = v.rstrip("/") + "/analyze/"
         return v
@@ -103,13 +101,17 @@ class Config(BaseSettings):
         return self.repo_root / "logs" / "payload_dbt.log"
 
     @property
-    def db_dbt_schema(self) -> str:
-        dbt_path = self.full_path_to_repo / self.dbt_project_name
+    def get_profiles_path(self) -> Path:
+        path = self.full_path_to_repo / self.dbt_project_name / "profiles.yml"
 
-        if not self.full_path_to_repo or not self.dbt_project_name:
+        return path if path.exists() else None
+
+    @property
+    def db_dbt_schema(self) -> str:
+        if not self.full_path_to_repo or not self.dbt_project_name or not self.get_profiles_path:
             return None
 
-        with open(dbt_path / "profiles.yml", mode="r") as f:
+        with open(self.get_profiles_path, mode="r") as f:
             lines = f.readlines()
             schema = re.search(pattern=r'schema:\s*(?P<schema>\S+)', string=''.join(lines))
         if not schema: 
@@ -118,12 +120,10 @@ class Config(BaseSettings):
     
     @property
     def db_dbt_database(self) -> str:
-        dbt_path = self.full_path_to_repo / self.dbt_project_name
-
-        if not self.full_path_to_repo or not self.dbt_project_name:
+        if not self.full_path_to_repo or not self.dbt_project_name or not self.get_profiles_path:
             return None
 
-        with open(dbt_path / "profiles.yml", mode="r") as f:
+        with open(self.get_profiles_path, mode="r") as f:
             lines = f.readlines()
             dbname = re.search(pattern=r'dbname:\s*(?P<database>\S+)', string=''.join(lines))
         if not dbname: 

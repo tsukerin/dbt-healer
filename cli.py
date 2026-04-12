@@ -11,7 +11,7 @@ import questionary
 from common.config import get_config
 from common.exceptions import CIFileExistsError, CIProfileExistsError
 from app.ci_generator import GithubCIGenerator
-from app.providers import OllamaProvider, GoogleAIProvider
+from app.provider_builder import ProviderType, build_provider
 
 console = Console()
 config = get_config()
@@ -83,10 +83,7 @@ def setup():
         config_dict["ai_provider"] = answer
         config.save({"ai_api_key": config_dict["ai_api_key"]})
 
-        if answer == 'Ollama':
-            provider = OllamaProvider()
-        if answer == 'Google AI Studio':
-            provider = GoogleAIProvider()
+        provider = build_provider(ai_provider=ProviderType(answer))
 
         console.print(Markdown("6. Which model do you prefer to use?"))
         answer = questionary.select(
@@ -161,7 +158,7 @@ def serve(port: int = 8888):
 
     config.save({"service_port": str(port)}) 
     
-    cmd = ["docker", "compose", "up", "--build"]
+    cmd = ["docker", "compose", "up"]
 
     subprocess.run(cmd, check=True)
 

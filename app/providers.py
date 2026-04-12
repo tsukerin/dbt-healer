@@ -67,7 +67,7 @@ class GoogleAIProvider(AbstractProvider):
         file = self.client.models.generate_content(
                 model=self.model,
                 config=types.GenerateContentConfig(
-                system_instruction=self.get_instruction("handle_error_file")),
+                system_instruction=get_instruction("handle_error_file")),
                 contents=self.context
             )
 
@@ -107,7 +107,6 @@ class OllamaProvider(AbstractProvider):
         return text.strip()
 
     def _extract_file_names(self, text: str) -> list[str]:
-        # Extract path-like tokens with an extension from a free-form model response.
         matches = re.findall(r"(?:[\w.-]+[\\/])*[\w.-]+\.[A-Za-z0-9_]+", text)
         files = []
 

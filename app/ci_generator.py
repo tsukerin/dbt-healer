@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 
 from common.config import Config, get_config
-from common.exceptions import CIFileExistsError, CIProfileExistsError 
+from common.exceptions import CIFileExistsError, CIProfileExistsError, DBTProfilesExistsError
 
 
 class AbstractCIGenerator(ABC):
@@ -29,7 +29,7 @@ class AbstractCIGenerator(ABC):
         """Checks if dbt profiles.yml exists in the project."""
         profiles_file = self.dbt_path / "profiles.yml"
         if not profiles_file.exists():
-            return False
+            raise DBTProfilesExistsError(f"profiles.yml not found, create it first in {self.dbt_path}")
 
         return "ci:" in profiles_file.read_text(encoding="utf-8")
 

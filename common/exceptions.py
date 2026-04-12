@@ -4,3 +4,5 @@ class CIProfileExistsError(Exception):
 class CIFileExistsError(Exception):
     pass
 
+class DBTProfilesExistsError(Exception):
+    pass

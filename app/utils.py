@@ -4,9 +4,7 @@ from typing import BinaryIO
 import subprocess
 import logging
 import json
-
 from common.config import get_config
-
 config = get_config()
 
 
