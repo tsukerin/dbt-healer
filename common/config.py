@@ -34,6 +34,7 @@ class Config(BaseSettings):
 
     github_repo_link: str = Field(default="", validation_alias="GITHUB_REPO_LINK")
     ai_provider: str = Field(default="Ollama", validation_alias="AI_PROVIDER")
+    ai_provider_type: str = Field(default="Ollama (API)", validation_alias="AI_PROVIDER_TYPE")
     ai_api_key: str = Field(default="", validation_alias="AI_API_KEY")
     ai_model: str = Field(default="", validation_alias="AI_MODEL")
     github_token: str = ""
@@ -142,12 +143,13 @@ class Config(BaseSettings):
     def path_to_dbt_proj(self) -> Path:
         return self.full_path_to_repo / self.dbt_project_name
 
-    def save(self, config_dict: dict[str, str]) -> bool:
+    def save(self, config_dict: dict[str, str | None]) -> bool:
         try:
             data = self.model_dump()
             data.update({key: val for key, val in config_dict.items() if val is not None})
 
             set_key(dotenv_path, "AI_PROVIDER", str(data.get("ai_provider", self.ai_provider) or "Ollama"))
+            set_key(dotenv_path, "AI_PROVIDER_TYPE", str(data.get("ai_provider_type", self.ai_provider_type) or "Ollama (API)"))
             set_key(dotenv_path, "AI_API_KEY", str(data.get("ai_api_key", self.ai_api_key) or ""))
             set_key(dotenv_path, "AI_MODEL", str(data.get("ai_model", self.ai_model) or ""))
 
@@ -188,6 +190,7 @@ class Config(BaseSettings):
             f"SERVICE_ENDPOINT: {self.service_endpoint}\n"
             f"GITHUB_REPO_LINK: {self.github_repo_link}\n"
             f"AI_PROVIDER: {self.ai_provider}\n"
+            f"AI_PROVIDER_TYPE: {self.ai_provider_type}\n"
             f"AI_API_KEY: {'***' if self.ai_api_key else None}\n"
             f"GITHUB_TOKEN: {'***' if self.github_token else None}\n"
             f"TELEGRAM_BOT_TOKEN: {'***' if self.telegram_bot_token else None}\n"

@@ -31,7 +31,11 @@ async def main() -> None:
     """Orchestrate solution retrieval, commit, and PR creation."""
     scan_hashes()
     context = get_context_log()
-    model = build_provider(ai_provider=ProviderType(config.ai_provider), context=context)
+    model = build_provider(
+        ai_provider=ProviderType(config.ai_provider),
+        context=context,
+        ollama_type=config.ai_provider_type,
+    )
     solution = model.get_solution()
     logging.info(solution)
 

@@ -3,7 +3,7 @@ import logging
 import re
 from google import genai
 from google.genai import types
-from ollama import Client, chat, ChatResponse
+from ollama import Client
 
 from common.config import Config, get_config
 from app.utils import get_file_context, get_instruction
@@ -92,15 +92,7 @@ class GoogleAIProvider(AbstractProvider):
     def get_models_list(self):
         return [model.name for model in self.client.models.list() if model.name]
     
-class OllamaProvider(AbstractProvider):
-
-    @property
-    def client(self):
-        return Client(
-            host="https://ollama.com",
-            headers={'Authorization': 'Bearer ' + self.ai_api_key}
-        )
-
+class BaseOllamaProvider(AbstractProvider):
     def _normalize_model_output(self, text: str) -> str:
         if "<think>" in text:
             return text.split("</think>")[-1].strip()
@@ -157,4 +149,23 @@ class OllamaProvider(AbstractProvider):
         return self._normalize_model_output(res)
 
     def get_models_list(self) -> list[str]:
-        return [model["model"] for model in self.client.list()["models"]]
+        return [model["model"] for model in self.client.list()["models"] if model["model"]]
+
+
+class LocalOllamaProvider(BaseOllamaProvider):
+    @property
+    def client(self):
+        return Client()
+
+
+class APIOllamaProvider(BaseOllamaProvider):
+    @property
+    def client(self):
+        return Client(
+            host="https://ollama.com",
+            headers={'Authorization': 'Bearer ' + self.ai_api_key}
+        )
+
+
+class OllamaProvider(APIOllamaProvider):
+    """Backward-compatible alias for the hosted Ollama API provider."""

@@ -11,7 +11,7 @@ import questionary
 from common.config import get_config
 from common.exceptions import CIFileExistsError, CIProfileExistsError
 from app.ci_generator import GithubCIGenerator
-from app.provider_builder import ProviderType, build_provider
+from app.provider_builder import OllamaProviderType, ProviderType, build_provider
 
 console = Console()
 config = get_config()
@@ -78,14 +78,30 @@ def setup():
             choices=["Google AI Studio", "Ollama"],
         ).ask()
 
-        console.print(Markdown("5. Enter your API key for the selected AI provider:"))
-        config_dict["ai_api_key"] = input(">>> ")
+        ai_provider_type = None
+        if answer == "Ollama":
+            console.print(Markdown("5. Select Ollama connection type:"))
+            ai_provider_type = questionary.select(
+                "Select AI provider:",
+                choices=[provider_type.value for provider_type in OllamaProviderType],
+            ).ask()
+
+        if ai_provider_type == OllamaProviderType.LOCAL.value:
+            config_dict["ai_api_key"] = ""
+        else:
+            console.print(Markdown("6. Enter your API key for the selected AI provider:"))
+            config_dict["ai_api_key"] = input(">>> ")
+
         config_dict["ai_provider"] = answer
+        config_dict["ai_provider_type"] = ai_provider_type
         config.save({"ai_api_key": config_dict["ai_api_key"]})
 
-        provider = build_provider(ai_provider=ProviderType(answer))
+        provider = build_provider(
+            ai_provider=ProviderType(answer),
+            ollama_type=ai_provider_type,
+        )
 
-        console.print(Markdown("6. Which model do you prefer to use?"))
+        console.print(Markdown("7. Which model do you prefer to use?"))
         answer = questionary.select(
             "Select model:",
             choices=provider.get_models_list(),
@@ -93,24 +109,24 @@ def setup():
         config_dict["ai_model"] = answer
 
     if change_parameter == 'Git platform and git parameters' or first_setup:
-        console.print(Markdown("7. Which git platform do you use?"))
+        console.print(Markdown("8. Which git platform do you use?"))
         answer = questionary.select(
             "Select platform:",
             choices=['Github'],
         ).ask()
         config_dict["git_platform"] = answer
 
-        console.print(Markdown(f"8. Enter the {answer} repository link:"))
+        console.print(Markdown(f"9. Enter the {answer} repository link:"))
         config_dict["github_repo_link"] = input(">>> ")
 
-        console.print(Markdown(f"9. Enter the base branch of your {answer} repository (e.g., `master` or `main`):"))
+        console.print(Markdown(f"10. Enter the base branch of your {answer} repository (e.g., `master` or `main`):"))
         config_dict["base_branch"] = input(">>> ")
 
-        console.print(Markdown(f"10. Enter your {answer} token (needed for creating pull requests):"))
+        console.print(Markdown(f"11. Enter your {answer} token (needed for creating pull requests):"))
         config_dict["github_token"] = input(">>> ")
         config.save({"github_token": config_dict["github_token"]})
 
-        console.print(Markdown(f"11. Enter your full local path of your {answer} repository:"))
+        console.print(Markdown(f"12. Enter your full local path of your {answer} repository:"))
         config_dict["full_path_to_repo_str"] = input(">>> ")
 
     console.print(Markdown("Saving configuration..."))
