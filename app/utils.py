@@ -134,6 +134,31 @@ def get_instruction(name: str) -> str:
     with open(path / f"{name}.md", mode="r", encoding="utf-8") as f:
         return f.read()
 
+
+def has_dbt_dependencies(dbt_project_path: Path) -> bool:
+    return any((dbt_project_path / name).exists() for name in ("packages.yml", "dependencies.yml"))
+
+
+def prepare_dbt_metadata(dbt_project_path: Path) -> None:
+    if has_dbt_dependencies(dbt_project_path):
+        try:
+            subprocess.run(["dbt", "deps"], cwd=dbt_project_path, check=True)
+        except subprocess.CalledProcessError as e:
+            logging.warning(
+                f"dbt deps failed; continuing without refreshed packages. "
+                f"Lineage context may be unavailable. Error: {e}"
+            )
+    else:
+        logging.info("No dbt package config found; skipping dbt deps.")
+
+    try:
+        subprocess.run(["dbt", "--show-all-deprecations", "parse"], cwd=dbt_project_path, check=True)
+    except subprocess.CalledProcessError as e:
+        logging.warning(
+            f"dbt parse failed; continuing without manifest lineage context. Error: {e}"
+        )
+
+
 def clone_repo_from_ci(repo: str, commit_hash: str, dbt_path: str, log_file: BinaryIO) -> None:
     workdir = Path(Path.home() / ".failedrepo")
     workdir.mkdir(parents=True, exist_ok=True)
@@ -159,19 +184,31 @@ def clone_repo_from_ci(repo: str, commit_hash: str, dbt_path: str, log_file: Bin
     failed_repo_path = repo_dir / dbt_path
     if not failed_repo_path.exists():
         raise RuntimeError(f"DBT project not found at {failed_repo_path}")
-    
-    subprocess.run(["dbt", "deps"], cwd=failed_repo_path, check=True)
-    subprocess.run(["dbt", "--show-all-deprecations", "parse"], cwd=failed_repo_path, check=True)
+
+    prepare_dbt_metadata(failed_repo_path)
 
 
 def parse_lineage_models(model: str) -> dict[str, str]:
     failed_repo_path = get_failed_repo_path()
-    with open(failed_repo_path / "target" / "manifest.json", mode="r") as f:
-        manifest = json.load(f)
+    manifest_path = failed_repo_path / "target" / "manifest.json"
+    if not manifest_path.exists():
+        logging.warning("dbt manifest not found at %s; skipping lineage context.", manifest_path)
+        return {}
+
+    try:
+        with open(manifest_path, mode="r") as f:
+            manifest = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        logging.warning("Unable to read dbt manifest at %s: %s", manifest_path, exc)
+        return {}
 
     model_name = Path(model).stem
     model_id = f"model.{config.dbt_project_name}.{model_name}"
-    node = manifest["nodes"][model_id]
+    node = manifest.get("nodes", {}).get(model_id)
+    if not node:
+        logging.warning(f"Model {model_id} not found in dbt manifest; skipping lineage context.")
+        return {}
+
     upstream = node["depends_on"]["nodes"]
     child_map = manifest["child_map"]
     downstream = child_map.get(model_id, [])

@@ -37,6 +37,7 @@ class Config(BaseSettings):
     ai_provider_type: str = Field(default="Ollama (API)", validation_alias="AI_PROVIDER_TYPE")
     ai_api_key: str = Field(default="", validation_alias="AI_API_KEY")
     ai_model: str = Field(default="", validation_alias="AI_MODEL")
+    ollama_host: str = Field(default="", validation_alias="OLLAMA_HOST")
     github_token: str = ""
     telegram_bot_token: str = Field(default="", validation_alias="TELEGRAM_BOT_TOKEN")
     dbt_project_name: str = ""
@@ -152,6 +153,7 @@ class Config(BaseSettings):
             set_key(dotenv_path, "AI_PROVIDER_TYPE", str(data.get("ai_provider_type", self.ai_provider_type) or "Ollama (API)"))
             set_key(dotenv_path, "AI_API_KEY", str(data.get("ai_api_key", self.ai_api_key) or ""))
             set_key(dotenv_path, "AI_MODEL", str(data.get("ai_model", self.ai_model) or ""))
+            set_key(dotenv_path, "OLLAMA_HOST", str(data.get("ollama_host", self.ollama_host) or ""))
 
             set_key(dotenv_path, "GITHUB_REPO_LINK", str(data.get("github_repo_link", self.github_repo_link) or ""))
             set_key(dotenv_path, "GITHUB_TOKEN", str(data.get("github_token", self.github_token) or ""))
@@ -192,6 +194,7 @@ class Config(BaseSettings):
             f"AI_PROVIDER: {self.ai_provider}\n"
             f"AI_PROVIDER_TYPE: {self.ai_provider_type}\n"
             f"AI_API_KEY: {'***' if self.ai_api_key else None}\n"
+            f"OLLAMA_HOST: {self.ollama_host or None}\n"
             f"GITHUB_TOKEN: {'***' if self.github_token else None}\n"
             f"TELEGRAM_BOT_TOKEN: {'***' if self.telegram_bot_token else None}\n"
             f"DBT_PROJECT_NAME: {self.dbt_project_name}\n"

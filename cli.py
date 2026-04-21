@@ -174,9 +174,11 @@ def serve(port: int = 8888):
 
     config.save({"service_port": str(port)}) 
     
-    cmd = ["docker", "compose", "up"]
+    cmd = ["docker", "compose", "up", "-d"]
 
     subprocess.run(cmd, check=True)
+
+    console.print("[green]Server is running![/green]")
 
     
 

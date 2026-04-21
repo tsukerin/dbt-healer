@@ -155,6 +155,8 @@ class BaseOllamaProvider(AbstractProvider):
 class LocalOllamaProvider(BaseOllamaProvider):
     @property
     def client(self):
+        if self.config.ollama_host:
+            return Client(host=self.config.ollama_host)
         return Client()
 
 

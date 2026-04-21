@@ -25,9 +25,12 @@ services:
       context: .
       dockerfile: service/Dockerfile
     env_file:
-      - .env
+       - .env
     environment:
       SERVICE_PORT: ${SERVICE_PORT}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${SERVICE_PORT}:${SERVICE_PORT}"
     healthcheck:
