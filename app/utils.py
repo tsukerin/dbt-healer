@@ -6,11 +6,12 @@ import logging
 import json
 import re
 from common.config import get_config
+
 config = get_config()
 
 DBT_SOURCE_DIRS = ("models", "snapshots", "seeds", "analyses", "macros")
 DBT_SOURCE_EXTENSIONS = (".sql", ".yml", ".yaml")
-DBT_NODE_RESOURCE_TYPES = ("model", "snapshot", "seed")
+DBT_NODE_RESOURCE_TYPES = ("model", "snapshot", "seed", "macro")
 
 
 def _compile_dbt_log_pattern(pattern: str) -> re.Pattern[str]:
@@ -22,13 +23,13 @@ DBT_ERROR_RE = _compile_dbt_log_pattern(rf"""
     \b
     (?:Database|Compilation|Runtime|Parsing) \s+ Error \s+ in \s+
     (?:sql \s+)?
-    (?P<resource>model|snapshot|seed) \s+
+    (?P<resource>model|snapshot|seed|macro) \s+
     (?P<name>[\w.$-]+)
     (?: \s+ \( (?P<path> [^)\n]+ ) \) )?
 """)
 DBT_FAILURE_RE = _compile_dbt_log_pattern(rf"""
     \b Failure \s+ in \s+
-    (?P<resource>model|test|snapshot|seed) \s+
+    (?P<resource>model|test|snapshot|seed|macro) \s+
     (?P<name>[\w.$-]+)
     (?: \s+ \( (?P<path> [^)\n]+ ) \) )?
 """)
@@ -43,7 +44,7 @@ DBT_NATURAL_MODEL_RE = _compile_dbt_log_pattern(rf"""
     [^\n]{{0,200}}
     \b (?:in|for|from) \s+
     (?:the \s+)?
-    (?P<name>[A-Za-z_][\w$]*) \s+ model \b
+    (?P<name>[A-Za-z_][\w$]*) \s+ (?:model|macro) \b
 """)
 DBT_SOURCE_PATH_RE = _compile_dbt_log_pattern(rf"""
     (?P<path>
@@ -117,11 +118,11 @@ def _read_dbt_manifest() -> dict:
         return {}
 
 
-def _resolve_manifest_model(model_name: str | None) -> str | None:
-    if not model_name:
+def _resolve_manifest_source(resource_name: str | None) -> str | None:
+    if not resource_name:
         return None
 
-    name = model_name.strip().strip("`'\".,;:()[]{}").split(".")[-1]
+    name = resource_name.strip().strip("`'\".,;:()[]{}").split(".")[-1]
     if not name:
         return None
 
@@ -139,18 +140,30 @@ def _resolve_manifest_model(model_name: str | None) -> str | None:
         if name in identifiers:
             return _normalize_dbt_source_path(original_file_path)
 
+    for macro in manifest.get("macros", {}).values():
+        original_file_path = macro.get("original_file_path")
+        if not original_file_path:
+            continue
+
+        identifiers = {
+            str(macro.get("name") or ""),
+            Path(original_file_path).stem,
+        }
+        if name in identifiers:
+            return _normalize_dbt_source_path(original_file_path)
+
     return None
 
 
-def _resolve_model_file(model_name: str | None) -> str | None:
-    resolved = _resolve_manifest_model(model_name)
+def _resolve_source_file(resource_name: str | None) -> str | None:
+    resolved = _resolve_manifest_source(resource_name)
     if resolved:
         return resolved
 
-    if not model_name:
+    if not resource_name:
         return None
 
-    name = model_name.strip().strip("`'\".,;:()[]{}").split(".")[-1]
+    name = resource_name.strip().strip("`'\".,;:()[]{}").split(".")[-1]
     if not name:
         return None
 
@@ -170,7 +183,7 @@ def _resolve_model_file(model_name: str | None) -> str | None:
 
 
 def _resolve_dbt_error_reference(model_name: str | None, raw_path: str | None) -> str | None:
-    return _normalize_dbt_source_path(raw_path) or _resolve_model_file(model_name)
+    return _normalize_dbt_source_path(raw_path) or _resolve_source_file(model_name)
 
 
 def get_error_files_from_dbt_log(log_text: str | list[str] | None) -> list[str]:
@@ -202,12 +215,12 @@ def get_error_files_from_dbt_log(log_text: str | list[str] | None) -> list[str]:
 
     for match in DBT_STATUS_MODEL_RE.finditer(text):
         relation = match.group("relation")
-        resolved = _resolve_model_file(relation.split(".")[-1])
+        resolved = _resolve_source_file(relation.split(".")[-1])
         if resolved:
             files.append(resolved)
 
     for match in DBT_NATURAL_MODEL_RE.finditer(text):
-        resolved = _resolve_model_file(match.group("name"))
+        resolved = _resolve_source_file(match.group("name"))
         if resolved:
             files.append(resolved)
 
@@ -254,6 +267,34 @@ def get_context_log() -> str:
     
     return '\n'.join(context_log)
 
+
+def _relative_to_failed_repo(path: Path) -> str:
+    try:
+        return path.relative_to(get_failed_repo_path()).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _get_file_diff(path: Path) -> str:
+    try:
+        failed_repo_path = get_failed_repo_path()
+        relative_path = path.relative_to(failed_repo_path)
+    except (RuntimeError, ValueError):
+        return "NO_DIFF"
+
+    result = subprocess.run(
+        ["git", "diff", "HEAD^", "--", relative_path.as_posix()],
+        cwd=failed_repo_path,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        logging.warning("Unable to get git diff for %s: %s", relative_path, result.stderr.strip())
+        return "NO_DIFF"
+
+    return result.stdout.strip() or "NO_DIFF"
+
+
 def get_file_context(files: list[str] | str) -> str:
     sources = []
 
@@ -279,12 +320,11 @@ def get_file_context(files: list[str] | str) -> str:
                     with open(path, encoding="utf-8", errors="replace") as f:
                         text = f.read()
                 
-                diff = subprocess.run(["git", "diff", "HEAD^", str(path)], text=True, capture_output=True).stdout
+                relative_path = _relative_to_failed_repo(path)
+                diff = _get_file_diff(path)
                 lineage_models = '\n'.join(f"CONTEXT OF {model}:\n{context}" for model, context in parse_lineage_models(file).items())
                 
-                sources.append(f'SOURCE OF {str(path)}: {text} \n FILE DIFF: {diff} \n LINAGE_MODELS: {lineage_models}')
-                
-                print(sources)
+                sources.append(f'SOURCE OF {relative_path}: {text}\nFILE DIFF: {diff}\nLINEAGE_MODELS: {lineage_models}')
 
     return '\n'.join(sources)
 
@@ -382,6 +422,45 @@ def clone_repo_from_ci(repo: str, commit_hash: str, dbt_path: str, log_file: Bin
     prepare_dbt_metadata(failed_repo_path)
 
 
+def _relevant_lineage_context(
+    text: str,
+    query: str,
+    model_name: str,
+    path: str,
+    relationship: str,
+    max_chars: int = 2600,
+) -> str:
+    if len(text) <= max_chars:
+        return text
+
+    try:
+        from langchain_classic.text_splitter import RecursiveCharacterTextSplitter
+        from langchain_community.vectorstores import FAISS
+        from langchain_core.documents import Document
+        from langchain_ollama import OllamaEmbeddings
+
+        document = Document(
+            page_content=f"SOURCE OF {path}:\n{text}",
+            metadata={"model": model_name, "path": path, "relationship": relationship},
+        )
+        chunks = RecursiveCharacterTextSplitter(
+            chunk_size=1200,
+            chunk_overlap=120,
+            separators=["\n\n", "\n", " ", ""],
+        ).split_documents([document])
+        embeddings = OllamaEmbeddings(model="embeddinggemma", base_url=config.ollama_host or None)
+        retriever = FAISS.from_documents(chunks, embeddings).as_retriever(search_kwargs={"k": min(2, len(chunks))})
+        excerpts = [doc.page_content.strip() for doc in retriever.invoke(query)]
+    except Exception as e:
+        logging.warning(f"LangChain lineage retrieval failed; using plain truncation: {e}")
+        excerpts = [text[:max_chars]]
+
+    return (
+        f"[lineage model truncated from {len(text)} chars with LangChain retrieval]\n"
+        + "\n\n--- excerpt ---\n\n".join(excerpts)
+    )
+
+
 def parse_lineage_models(model: str) -> dict[str, str]:
     failed_repo_path = get_failed_repo_path()
     manifest_path = failed_repo_path / "target" / "manifest.json"
@@ -407,14 +486,30 @@ def parse_lineage_models(model: str) -> dict[str, str]:
     child_map = manifest["child_map"]
     downstream = child_map.get(model_id, [])
 
-    lineage = set(upstream + downstream)
+    failed_model_path = failed_repo_path / node["original_file_path"]
+    try:
+        failed_model_source = failed_model_path.read_text(encoding="utf-8")
+    except OSError:
+        failed_model_source = ""
+
+    query = "\n".join((get_context_log(), failed_model_source))
+    lineage = [(node_id, "upstream")for node_id in upstream] + [(node_id, "downstream")for node_id in downstream if node_id not in upstream]
     context_models = {}
 
-    for node_id in lineage:
+    for node_id, relationship in lineage:
         node = manifest["nodes"].get(node_id)
         if node and node["resource_type"] == "model":
             file_path = failed_repo_path / node["original_file_path"]
-            context_models[node["name"]] = file_path.read_text()
+            try:
+                text = file_path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                text = file_path.read_text(encoding="utf-8", errors="replace")
+
+            context_models[node["name"]] = (
+                f"relationship: {relationship}\n"
+                f"path: {node['original_file_path']}\n"
+                f"{_relevant_lineage_context(text, query, node['name'], node['original_file_path'], relationship)}"
+            )
 
     return context_models
 
