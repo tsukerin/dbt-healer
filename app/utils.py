@@ -4,8 +4,59 @@ from typing import BinaryIO
 import subprocess
 import logging
 import json
+import re
 from common.config import get_config
 config = get_config()
+
+DBT_SOURCE_DIRS = ("models", "snapshots", "seeds", "analyses", "macros")
+DBT_SOURCE_EXTENSIONS = (".sql", ".yml", ".yaml")
+DBT_NODE_RESOURCE_TYPES = ("model", "snapshot", "seed")
+
+
+def _compile_dbt_log_pattern(pattern: str) -> re.Pattern[str]:
+    return re.compile(pattern, re.IGNORECASE | re.VERBOSE)
+
+
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+DBT_ERROR_RE = _compile_dbt_log_pattern(rf"""
+    \b
+    (?:Database|Compilation|Runtime|Parsing) \s+ Error \s+ in \s+
+    (?:sql \s+)?
+    (?P<resource>model|snapshot|seed) \s+
+    (?P<name>[\w.$-]+)
+    (?: \s+ \( (?P<path> [^)\n]+ ) \) )?
+""")
+DBT_FAILURE_RE = _compile_dbt_log_pattern(rf"""
+    \b Failure \s+ in \s+
+    (?P<resource>model|test|snapshot|seed) \s+
+    (?P<name>[\w.$-]+)
+    (?: \s+ \( (?P<path> [^)\n]+ ) \) )?
+""")
+DBT_STATUS_MODEL_RE = _compile_dbt_log_pattern(rf"""
+    \b ERROR \b
+    [^\n]*
+    \b model \s+
+    (?P<relation>[A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)?)
+""")
+DBT_NATURAL_MODEL_RE = _compile_dbt_log_pattern(rf"""
+    \b error \b
+    [^\n]{{0,200}}
+    \b (?:in|for|from) \s+
+    (?:the \s+)?
+    (?P<name>[A-Za-z_][\w$]*) \s+ model \b
+""")
+DBT_SOURCE_PATH_RE = _compile_dbt_log_pattern(rf"""
+    (?P<path>
+        (?:[A-Za-z]:)?
+        /?
+        (?:[\w.@+ -]+/)*
+        (?:{"|".join(map(re.escape, DBT_SOURCE_DIRS))})/
+        [\w.@+ /-]+
+        \.
+        (?:{"|".join(re.escape(ext.lstrip(".")) for ext in DBT_SOURCE_EXTENSIONS)})
+    )
+""")
+DBT_EXPLICIT_ERROR_PATTERNS = (DBT_ERROR_RE, DBT_FAILURE_RE)
 
 
 def get_failed_repo_path() -> Path:
@@ -17,6 +68,150 @@ def get_failed_repo_path() -> Path:
         raise RuntimeError(f"DBT project not found at {failed_repo_path}")
 
     return failed_repo_path
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    return list(dict.fromkeys(item for item in items if item))
+
+
+def _clean_log_text(log_text: str | list[str] | None) -> str:
+    if isinstance(log_text, list):
+        log_text = "\n".join(log_text)
+    return ANSI_ESCAPE_RE.sub("", str(log_text or ""))
+
+
+def _normalize_dbt_source_path(raw_path: str | None) -> str | None:
+    if not raw_path:
+        return None
+
+    path = raw_path.strip().strip("`'\".,;:()[]{}").replace("\\", "/")
+    if not path.lower().endswith(DBT_SOURCE_EXTENSIONS):
+        return None
+
+    for source_dir in DBT_SOURCE_DIRS:
+        marker = f"{source_dir}/"
+        marker_index = path.find(marker)
+        if marker_index >= 0:
+            return path[marker_index:]
+
+    if "/target/" in f"/{path}":
+        return None
+
+    return path
+
+
+def _read_dbt_manifest() -> dict:
+    try:
+        manifest_path = get_failed_repo_path() / "target" / "manifest.json"
+    except RuntimeError:
+        return {}
+
+    if not manifest_path.exists():
+        return {}
+
+    try:
+        with open(manifest_path, mode="r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        logging.warning("Unable to read dbt manifest at %s: %s", manifest_path, exc)
+        return {}
+
+
+def _resolve_manifest_model(model_name: str | None) -> str | None:
+    if not model_name:
+        return None
+
+    name = model_name.strip().strip("`'\".,;:()[]{}").split(".")[-1]
+    if not name:
+        return None
+
+    manifest = _read_dbt_manifest()
+    for node in manifest.get("nodes", {}).values():
+        original_file_path = node.get("original_file_path")
+        if node.get("resource_type") not in DBT_NODE_RESOURCE_TYPES or not original_file_path:
+            continue
+
+        identifiers = {
+            str(node.get("name") or ""),
+            str(node.get("alias") or ""),
+            Path(original_file_path).stem,
+        }
+        if name in identifiers:
+            return _normalize_dbt_source_path(original_file_path)
+
+    return None
+
+
+def _resolve_model_file(model_name: str | None) -> str | None:
+    resolved = _resolve_manifest_model(model_name)
+    if resolved:
+        return resolved
+
+    if not model_name:
+        return None
+
+    name = model_name.strip().strip("`'\".,;:()[]{}").split(".")[-1]
+    if not name:
+        return None
+
+    try:
+        failed_repo_path = get_failed_repo_path()
+    except RuntimeError:
+        return None
+
+    matches = sorted(
+        path for path in failed_repo_path.rglob(f"{name}.sql")
+        if "target" not in path.parts and "dbt_packages" not in path.parts
+    )
+    if not matches:
+        return None
+
+    return matches[0].relative_to(failed_repo_path).as_posix()
+
+
+def _resolve_dbt_error_reference(model_name: str | None, raw_path: str | None) -> str | None:
+    return _normalize_dbt_source_path(raw_path) or _resolve_model_file(model_name)
+
+
+def get_error_files_from_dbt_log(log_text: str | list[str] | None) -> list[str]:
+    """Extract failing dbt source files from dbt's own error lines."""
+    text = _clean_log_text(log_text)
+    if not text:
+        return []
+
+    files = []
+    for pattern in DBT_EXPLICIT_ERROR_PATTERNS:
+        for match in pattern.finditer(text):
+            resolved = _resolve_dbt_error_reference(
+                match.groupdict().get("name"),
+                match.groupdict().get("path"),
+            )
+            if resolved:
+                files.append(resolved)
+
+    if files:
+        return _dedupe(files)
+
+    for match in DBT_SOURCE_PATH_RE.finditer(text):
+        resolved = _normalize_dbt_source_path(match.group("path"))
+        if resolved:
+            files.append(resolved)
+
+    if files:
+        return _dedupe(files)
+
+    for match in DBT_STATUS_MODEL_RE.finditer(text):
+        relation = match.group("relation")
+        resolved = _resolve_model_file(relation.split(".")[-1])
+        if resolved:
+            files.append(resolved)
+
+    for match in DBT_NATURAL_MODEL_RE.finditer(text):
+        resolved = _resolve_model_file(match.group("name"))
+        if resolved:
+            files.append(resolved)
+
+    return _dedupe(files)
 
 def scan_hashes() -> None:
     """Scan dbt log for error hashes and store them in a separate file."""
@@ -127,7 +322,6 @@ def get_instruction(name: str) -> str:
     """
     Get available instructions:
     - handle_solution
-    - handle_error_file
     """
     path = Path(__file__).resolve().parents[1] / "common" / "instructions"
 
@@ -223,3 +417,6 @@ def parse_lineage_models(model: str) -> dict[str, str]:
             context_models[node["name"]] = file_path.read_text()
 
     return context_models
+
+def relevant_context_lineage_models(context_models: dict[str, str]):
+    pass

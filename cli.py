@@ -75,7 +75,7 @@ def setup():
         console.print(Markdown("4. What provider do you want to use for AI analysis?"))
         answer = questionary.select(
             "Select AI provider:",
-            choices=["Google AI Studio", "Ollama"],
+            choices=[provider.value for provider in ProviderType],
         ).ask()
 
         ai_provider_type = None

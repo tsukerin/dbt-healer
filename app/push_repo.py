@@ -1,7 +1,6 @@
 from pathlib import Path
 from datetime import datetime
 import re
-from typing import Tuple
 import logging
 import os
 
@@ -13,7 +12,7 @@ from common.config import get_config
 
 config = get_config()
 
-def extract_solution_parts(solution: str) -> Tuple[str, str]:
+def extract_solution_parts(solution: str) -> list[tuple[str, str]]:
     """Parse solution content and target file path."""
     solution_parts = []
 
@@ -23,11 +22,9 @@ def extract_solution_parts(solution: str) -> Tuple[str, str]:
 
         if not content_match or not file_match:
             logging.warning(f"Solution part №{idx+1} must contain <solution> and <file> blocks")
+            continue
 
         solution_parts.append((content_match.group(1), file_match.group(1)))
-    
-    if len(solution_parts) < 1:
-        raise ValueError("No valid solution parts found.")
     
     return solution_parts
 

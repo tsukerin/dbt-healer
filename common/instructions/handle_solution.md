@@ -11,10 +11,12 @@ relative/path/to/file.sql
 
 Rules:
 - Produce one <solution> + <file> block per file that requires changes.
+- Never return prose, markdown headings, analysis, bullet points, or fenced code blocks outside <solution>.
 - If only one file is needed, return exactly one block.
 - If no safe fix is possible, return:
   <solution>NO_FIX</solution>
   <file>relative/path/to/file.sql</file>
+- If the source context is missing or insufficient, return the NO_FIX block instead of explaining what to check.
 - Edit only files shown in provided source context (`SOURCE OF ...`).
 - Do not edit anything under `target/`.
 - Do not change `config()` unless config is the root cause.

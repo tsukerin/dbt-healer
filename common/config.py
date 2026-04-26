@@ -38,6 +38,8 @@ class Config(BaseSettings):
     ai_api_key: str = Field(default="", validation_alias="AI_API_KEY")
     ai_model: str = Field(default="", validation_alias="AI_MODEL")
     ollama_host: str = Field(default="", validation_alias="OLLAMA_HOST")
+    ollama_num_ctx: int = Field(default=8192, validation_alias="OLLAMA_NUM_CTX")
+    ai_max_input_chars: int = Field(default=24000, validation_alias="AI_MAX_INPUT_CHARS")
     github_token: str = ""
     telegram_bot_token: str = Field(default="", validation_alias="TELEGRAM_BOT_TOKEN")
     dbt_project_name: str = ""
@@ -149,11 +151,20 @@ class Config(BaseSettings):
             data = self.model_dump()
             data.update({key: val for key, val in config_dict.items() if val is not None})
 
-            set_key(dotenv_path, "AI_PROVIDER", str(data.get("ai_provider", self.ai_provider) or "Ollama"))
-            set_key(dotenv_path, "AI_PROVIDER_TYPE", str(data.get("ai_provider_type", self.ai_provider_type) or "Ollama (API)"))
+            ai_provider = str(data.get("ai_provider", self.ai_provider) or "Ollama")
+            ai_provider_type = str(data.get("ai_provider_type", self.ai_provider_type) or "")
+            if ai_provider == "Ollama":
+                ai_provider_type = ai_provider_type or "Ollama (API)"
+            else:
+                ai_provider_type = ""
+
+            set_key(dotenv_path, "AI_PROVIDER", ai_provider)
+            set_key(dotenv_path, "AI_PROVIDER_TYPE", ai_provider_type)
             set_key(dotenv_path, "AI_API_KEY", str(data.get("ai_api_key", self.ai_api_key) or ""))
             set_key(dotenv_path, "AI_MODEL", str(data.get("ai_model", self.ai_model) or ""))
             set_key(dotenv_path, "OLLAMA_HOST", str(data.get("ollama_host", self.ollama_host) or ""))
+            set_key(dotenv_path, "OLLAMA_NUM_CTX", str(data.get("ollama_num_ctx", self.ollama_num_ctx)))
+            set_key(dotenv_path, "AI_MAX_INPUT_CHARS", str(data.get("ai_max_input_chars", self.ai_max_input_chars)))
 
             set_key(dotenv_path, "GITHUB_REPO_LINK", str(data.get("github_repo_link", self.github_repo_link) or ""))
             set_key(dotenv_path, "GITHUB_TOKEN", str(data.get("github_token", self.github_token) or ""))
@@ -195,6 +206,8 @@ class Config(BaseSettings):
             f"AI_PROVIDER_TYPE: {self.ai_provider_type}\n"
             f"AI_API_KEY: {'***' if self.ai_api_key else None}\n"
             f"OLLAMA_HOST: {self.ollama_host or None}\n"
+            f"OLLAMA_NUM_CTX: {self.ollama_num_ctx}\n"
+            f"AI_MAX_INPUT_CHARS: {self.ai_max_input_chars}\n"
             f"GITHUB_TOKEN: {'***' if self.github_token else None}\n"
             f"TELEGRAM_BOT_TOKEN: {'***' if self.telegram_bot_token else None}\n"
             f"DBT_PROJECT_NAME: {self.dbt_project_name}\n"
