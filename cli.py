@@ -5,11 +5,10 @@ import typer
 from pathlib import Path
 from rich.markdown import Markdown
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
 import questionary
 
 from common.config import get_config
-from common.exceptions import CIFileExistsError, CIProfileExistsError
+from common.exceptions import DBTProfilesExistsError
 from app.ci_generator import GithubCIGenerator
 from app.provider_builder import OllamaProviderType, ProviderType, build_provider
 
@@ -138,32 +137,29 @@ def setup():
         time.sleep(1)
 
     if change_parameter == 'Git platform and git parameters' or first_setup:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            transient=True,
-        ) as progress:
-            if answer == 'Github':
-                generator = GithubCIGenerator()
+        if answer == 'Github':
+            generator = GithubCIGenerator()
 
-            try:
-                create_ci_file = progress.add_task(description="Creating CI into your repository...", total=None)
-                generator.create_ci_file()
-                time.sleep(2)
-                progress.update(create_ci_file, completed=1)
+        try:
+            with console.status("Creating CI workflow..."):
+                ci_file_status = generator.create_ci_file()
 
-                create_ci_profile = progress.add_task(description="Creating CI profile into your dbt project...", total=None)
-                generator.create_ci_profile()
-                time.sleep(2)
-                progress.update(create_ci_profile, completed=1)
+            with console.status("Creating CI profile..."):
+                ci_profile_status = generator.create_ci_profile()
 
-                console.print("[green]CI configured successfully![/green]")
+        except DBTProfilesExistsError as exc:
+            console.print(f"[red]{exc}[/red]")
+            return
+        except Exception as exc:
+            console.print(f"[red]Failed to configure CI: {exc}[/red]")
+            return
 
-            except CIFileExistsError:
-                console.print("[yellow]CI file already exists. Skipping creation...[/yellow]")
+        if ci_file_status == "exists":
+            console.print("[yellow]CI workflow already exists. Skipping creation...[/yellow]")
+        if ci_profile_status == "exists":
+            console.print("[yellow]CI profile already exists. Skipping creation...[/yellow]")
 
-            except CIProfileExistsError:
-                console.print("[yellow]CI profile already exists. Skipping creation...[/yellow]")
+        console.print("[green]CI configured successfully![/green]")
                     
         
 
