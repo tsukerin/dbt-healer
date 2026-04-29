@@ -1,5 +1,4 @@
 from pathlib import Path
-from git import Repo
 from typing import BinaryIO
 import subprocess
 import logging
@@ -7,58 +6,15 @@ import json
 import re
 from common.config import get_config
 
+from app.dbt_exps import (
+    DBT_SOURCE_DIRS,
+    DBT_SOURCE_EXTENSIONS,
+    DBT_NODE_RESOURCE_TYPES,
+    DbtRegularExpressions
+)
+
 config = get_config()
-
-DBT_SOURCE_DIRS = ("models", "snapshots", "seeds", "analyses", "macros")
-DBT_SOURCE_EXTENSIONS = (".sql", ".yml", ".yaml")
-DBT_NODE_RESOURCE_TYPES = ("model", "snapshot", "seed", "macro")
-
-
-def _compile_dbt_log_pattern(pattern: str) -> re.Pattern[str]:
-    return re.compile(pattern, re.IGNORECASE | re.VERBOSE)
-
-
-ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
-DBT_ERROR_RE = _compile_dbt_log_pattern(rf"""
-    \b
-    (?:Database|Compilation|Runtime|Parsing) \s+ Error \s+ in \s+
-    (?:sql \s+)?
-    (?P<resource>model|snapshot|seed|macro) \s+
-    (?P<name>[\w.$-]+)
-    (?: \s+ \( (?P<path> [^)\n]+ ) \) )?
-""")
-DBT_FAILURE_RE = _compile_dbt_log_pattern(rf"""
-    \b Failure \s+ in \s+
-    (?P<resource>model|test|snapshot|seed|macro) \s+
-    (?P<name>[\w.$-]+)
-    (?: \s+ \( (?P<path> [^)\n]+ ) \) )?
-""")
-DBT_STATUS_MODEL_RE = _compile_dbt_log_pattern(rf"""
-    \b ERROR \b
-    [^\n]*
-    \b model \s+
-    (?P<relation>[A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)?)
-""")
-DBT_NATURAL_MODEL_RE = _compile_dbt_log_pattern(rf"""
-    \b error \b
-    [^\n]{{0,200}}
-    \b (?:in|for|from) \s+
-    (?:the \s+)?
-    (?P<name>[A-Za-z_][\w$]*) \s+ (?:model|macro) \b
-""")
-DBT_SOURCE_PATH_RE = _compile_dbt_log_pattern(rf"""
-    (?P<path>
-        (?:[A-Za-z]:)?
-        /?
-        (?:[\w.@+ -]+/)*
-        (?:{"|".join(map(re.escape, DBT_SOURCE_DIRS))})/
-        [\w.@+ /-]+
-        \.
-        (?:{"|".join(re.escape(ext.lstrip(".")) for ext in DBT_SOURCE_EXTENSIONS)})
-    )
-""")
-DBT_EXPLICIT_ERROR_PATTERNS = (DBT_ERROR_RE, DBT_FAILURE_RE)
-
+exp = DbtRegularExpressions()
 
 def get_failed_repo_path() -> Path:
     if not config.dbt_project_name:
@@ -78,7 +34,7 @@ def _dedupe(items: list[str]) -> list[str]:
 def _clean_log_text(log_text: str | list[str] | None) -> str:
     if isinstance(log_text, list):
         log_text = "\n".join(log_text)
-    return ANSI_ESCAPE_RE.sub("", str(log_text or ""))
+    return exp.ANSI_ESCAPE_RE.sub("", str(log_text or ""))
 
 
 def _normalize_dbt_source_path(raw_path: str | None) -> str | None:
@@ -155,6 +111,50 @@ def _resolve_manifest_source(resource_name: str | None) -> str | None:
     return None
 
 
+def _resolve_test_failure_source(test_name: str | None, raw_path: str | None) -> str | None:
+    if not test_name:
+        return None
+
+    name = test_name.strip().strip("`'\".,;:()[]{}").split(".")[-1]
+    manifest = _read_dbt_manifest()
+    for node_id, node in manifest.get("nodes", {}).items():
+        identifiers = {str(node.get("name") or ""), str(node.get("alias") or "")}
+        if node.get("resource_type") != "test":
+            continue
+        if (
+            name not in identifiers
+            and f".{name}." not in node_id
+            and not node_id.endswith(f".{name}")
+        ):
+            continue
+        for dep_id in node.get("depends_on", {}).get("nodes", []):
+            dep_node = manifest.get("nodes", {}).get(dep_id)
+            if dep_node and dep_node.get("resource_type") in ("model", "snapshot", "seed"):
+                resolved = _normalize_dbt_source_path(dep_node.get("original_file_path"))
+                if resolved:
+                    return resolved
+
+    try:
+        failed_repo_path = get_failed_repo_path()
+    except RuntimeError:
+        failed_repo_path = None
+
+    if failed_repo_path:
+        candidates = sorted(
+            (path for path in (failed_repo_path / "models").rglob("*.sql")),
+            key=lambda path: len(path.stem),
+            reverse=True,
+        )
+        for path in candidates:
+            if f"_{path.stem}_" in f"_{name}_":
+                return path.relative_to(failed_repo_path).as_posix()
+
+    resolved_path = _normalize_dbt_source_path(raw_path)
+    if resolved_path and (resolved_path.endswith(".sql") or resolved_path.startswith("tests/")):
+        return resolved_path
+    return None
+
+
 def _resolve_source_file(resource_name: str | None) -> str | None:
     resolved = _resolve_manifest_source(resource_name)
     if resolved:
@@ -182,8 +182,15 @@ def _resolve_source_file(resource_name: str | None) -> str | None:
     return matches[0].relative_to(failed_repo_path).as_posix()
 
 
-def _resolve_dbt_error_reference(model_name: str | None, raw_path: str | None) -> str | None:
-    return _normalize_dbt_source_path(raw_path) or _resolve_source_file(model_name)
+def _resolve_dbt_error_reference(
+    resource_type: str | None,
+    resource_name: str | None,
+    raw_path: str | None,
+) -> str | None:
+    if resource_type and resource_type.lower() == "test":
+        return _resolve_test_failure_source(resource_name, raw_path)
+
+    return _normalize_dbt_source_path(raw_path) or _resolve_source_file(resource_name)
 
 
 def get_error_files_from_dbt_log(log_text: str | list[str] | None) -> list[str]:
@@ -193,19 +200,24 @@ def get_error_files_from_dbt_log(log_text: str | list[str] | None) -> list[str]:
         return []
 
     files = []
-    for pattern in DBT_EXPLICIT_ERROR_PATTERNS:
+    unresolved_test_failure = False
+    for pattern in exp.DBT_EXPLICIT_ERROR_PATTERNS:
         for match in pattern.finditer(text):
+            resource = match.groupdict().get("resource")
             resolved = _resolve_dbt_error_reference(
+                resource,
                 match.groupdict().get("name"),
                 match.groupdict().get("path"),
             )
             if resolved:
                 files.append(resolved)
+            elif resource and resource.lower() == "test":
+                unresolved_test_failure = True
 
-    if files:
+    if files or unresolved_test_failure:
         return _dedupe(files)
 
-    for match in DBT_SOURCE_PATH_RE.finditer(text):
+    for match in exp.DBT_SOURCE_PATH_RE.finditer(text):
         resolved = _normalize_dbt_source_path(match.group("path"))
         if resolved:
             files.append(resolved)
@@ -213,13 +225,13 @@ def get_error_files_from_dbt_log(log_text: str | list[str] | None) -> list[str]:
     if files:
         return _dedupe(files)
 
-    for match in DBT_STATUS_MODEL_RE.finditer(text):
+    for match in exp.DBT_STATUS_MODEL_RE.finditer(text):
         relation = match.group("relation")
         resolved = _resolve_source_file(relation.split(".")[-1])
         if resolved:
             files.append(resolved)
 
-    for match in DBT_NATURAL_MODEL_RE.finditer(text):
+    for match in exp.DBT_NATURAL_MODEL_RE.finditer(text):
         resolved = _resolve_source_file(match.group("name"))
         if resolved:
             files.append(resolved)
@@ -271,8 +283,16 @@ def get_context_log() -> str:
 def _relative_to_failed_repo(path: Path) -> str:
     try:
         return path.relative_to(get_failed_repo_path()).as_posix()
-    except ValueError:
+    except (RuntimeError, ValueError):
         return path.as_posix()
+
+
+def _git_revision_exists(repo_path: Path, revision: str) -> bool:
+    return subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", revision],
+        cwd=repo_path,
+        capture_output=True,
+    ).returncode == 0
 
 
 def _get_file_diff(path: Path) -> str:
@@ -282,8 +302,17 @@ def _get_file_diff(path: Path) -> str:
     except (RuntimeError, ValueError):
         return "NO_DIFF"
 
+    base_revision = None
+    for revision in ("HEAD^", f"origin/{config.base_branch}"):
+        if _git_revision_exists(failed_repo_path, revision):
+            base_revision = revision
+            break
+
+    if not base_revision:
+        return "NO_DIFF"
+
     result = subprocess.run(
-        ["git", "diff", "HEAD^", "--", relative_path.as_posix()],
+        ["git", "diff", base_revision, "--", relative_path.as_posix()],
         cwd=failed_repo_path,
         text=True,
         capture_output=True,
@@ -327,36 +356,6 @@ def get_file_context(files: list[str] | str) -> str:
                 sources.append(f'SOURCE OF {relative_path}: {text}\nFILE DIFF: {diff}\nLINEAGE_MODELS: {lineage_models}')
 
     return '\n'.join(sources)
-
-def get_changed_files(path: Path | None = None, mode: str = 'debug') -> list[Path]:
-    if path is None:
-        path = config.repo_root
-
-    repo = Repo(path)
-    diff = repo.head.commit.diff(None)
-    origin = repo.remotes.origin
-    origin.fetch()
-
-    changed = []
-
-    if mode == 'debug':
-        for item in diff:
-            file = item.a_path
-            print(f"Changed file: {file}")
-            changed.append(Path(item.a_path).stem) if '.sql' in file else None
-
-    elif mode == 'prod':
-        diff_index = repo.commit("HEAD").diff("origin/master")
-
-        for d in diff_index:
-            changed.append(Path(d.a_path).stem) if d.change_type != 'D' and '.sql' in d.a_path else None
-
-    if changed:
-        logging.info("Changed files detected: " + ", ".join([str(file) for file in changed]))
-
-    repo.close()
-    
-    return changed
 
 def get_instruction(name: str) -> str:
     """
@@ -475,8 +474,7 @@ def parse_lineage_models(model: str) -> dict[str, str]:
         logging.warning("Unable to read dbt manifest at %s: %s", manifest_path, exc)
         return {}
 
-    model_name = Path(model).stem
-    model_id = f"model.{config.dbt_project_name}.{model_name}"
+    model_id = f"model.{config.dbt_project_name}.{Path(model).stem}"
     node = manifest.get("nodes", {}).get(model_id)
     if not node:
         logging.warning(f"Model {model_id} not found in dbt manifest; skipping lineage context.")
@@ -512,6 +510,3 @@ def parse_lineage_models(model: str) -> dict[str, str]:
             )
 
     return context_models
-
-def relevant_context_lineage_models(context_models: dict[str, str]):
-    pass

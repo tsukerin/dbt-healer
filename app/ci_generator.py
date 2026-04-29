@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 
 from common.config import Config, get_config
-from common.exceptions import CIFileExistsError, CIProfileExistsError, DBTProfilesExistsError
+from common.exceptions import DBTProfilesExistsError
 
 
 class AbstractCIGenerator(ABC):
@@ -37,7 +37,7 @@ class AbstractCIGenerator(ABC):
         """Creates CI profile for dbt project."""
         if self._check_ci_profile():
             logging.warning("CI profile already exists. Skipping creation.")
-            return CIProfileExistsError
+            return "exists"
 
         ci_profile = (
             "\nci:\n"
@@ -55,6 +55,8 @@ class AbstractCIGenerator(ABC):
         
         with open(self.dbt_path / "profiles.yml", "a", encoding="utf-8") as f:
             f.write(ci_profile)
+
+        return "created"
 
     @abstractmethod
     def create_ci_file(self):
@@ -77,7 +79,7 @@ class GithubCIGenerator(AbstractCIGenerator):
 
         if ci_file.exists() and len(ci_file.read_text()) > 0:
             logging.warning("CI file already exists. Skipping creation.")
-            return CIFileExistsError
+            return "exists"
 
         try:
             content = self.ci_content.read_text(encoding="utf-8")
@@ -99,6 +101,8 @@ class GithubCIGenerator(AbstractCIGenerator):
                 f.write(content)
         except Exception as e:
             logging.error(f"Failed to create CI file: {e}")
-            return Exception(e)
+            raise RuntimeError(f"Failed to create CI file: {e}") from e
+
+        return "created"
 
         

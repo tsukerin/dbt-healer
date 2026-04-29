@@ -1,12 +1,129 @@
 from abc import ABC, abstractmethod
 import logging
+import re
+import time
+import httpcore
 import requests
 from google import genai
 from google.genai import types
-from ollama import Client
+from ollama import Client, RequestError as OllamaRequestError
 
 from common.config import Config, get_config
 from app.utils import get_error_files_from_dbt_log, get_file_context, get_instruction
+
+TRANSIENT_PROVIDER_ERRORS = (
+    requests.ConnectionError,
+    requests.Timeout,
+    httpcore.NetworkError,
+    httpcore.TimeoutException,
+    OllamaRequestError,
+)
+
+SOURCE_PATH_RE = re.compile(r"(?m)^SOURCE OF\s+([^:\n]+):")
+SOLUTION_BLOCK_RE = re.compile(r"<solution>(.*?)</solution>\s*<file>(.*?)</file>", re.DOTALL)
+
+
+def retry_request(call, attempts: int = 3):
+    delay = 2
+    for attempt in range(1, attempts + 1):
+        try:
+            return call()
+        except TRANSIENT_PROVIDER_ERRORS as exc:
+            if attempt == attempts:
+                raise
+            logging.warning(
+                "Provider request failed with transient network error (%s/%s): %s. Retrying in %ss",
+                attempt,
+                attempts,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
+            delay *= 2
+
+
+def normalize_response(text: str) -> str:
+    if "<think>" in text:
+        text = text.split("</think>")[-1]
+    return text.strip()
+
+
+def source_paths(file_context: str) -> list[str]:
+    return list(dict.fromkeys(path.strip() for path in SOURCE_PATH_RE.findall(file_context)))
+
+
+def build_solution_prompt(context: str | list[str] | None, file_context: str) -> str:
+    if isinstance(context, list):
+        context = "\n".join(map(str, context))
+    return (
+        f"<DBT_LOG>\n{context or ''}\n</DBT_LOG>\n\n"
+        f"<SOURCE_CONTEXT>\n{file_context}\n</SOURCE_CONTEXT>"
+    )
+
+
+def no_fix_solution(file_context: str) -> str:
+    paths = source_paths(file_context)
+    file = paths[0] if paths else "NO_FILE"
+    return f"<solution>NO_FIX</solution>\n<file>\n{file}\n</file>"
+
+
+def repair_prompt(file_context: str, bad_response: str) -> str:
+    paths = source_paths(file_context)
+    file = paths[0] if paths else "NO_FILE"
+    return f"""Your previous response did not match the required tags.
+Return only one valid block for this exact file path: {file}
+
+If the previous response contains full corrected file content, put that content in <solution>.
+Otherwise return NO_FIX.
+
+Valid fallback:
+<solution>NO_FIX</solution>
+<file>
+{file}
+</file>
+
+Previous response:
+{bad_response}
+"""
+
+
+def is_valid_solution(text: str, file_context: str) -> bool:
+    text = normalize_response(text)
+    allowed_paths = set(source_paths(file_context))
+    blocks = SOLUTION_BLOCK_RE.findall(text)
+    if not text.startswith("<solution>") or not allowed_paths or not blocks:
+        return False
+
+    leftover = SOLUTION_BLOCK_RE.sub("", text)
+    leftover = re.sub(r"\s*----\s*", "", leftover)
+    if leftover.strip():
+        return False
+
+    for solution, file in blocks:
+        solution = solution.strip()
+        file = file.strip()
+        if not solution or file not in allowed_paths:
+            return False
+        if solution.startswith("```") or solution.startswith("diff --git"):
+            return False
+
+    return True
+
+
+def final_solution(file_context: str, response: str, retry=None) -> str:
+    response = normalize_response(response or "")
+    if is_valid_solution(response, file_context):
+        return response
+
+    logging.warning("Model returned malformed solution output; retrying strict format repair.")
+    if retry:
+        repaired = normalize_response(retry(response) or "")
+        if is_valid_solution(repaired, file_context):
+            return repaired
+
+    logging.warning("Model did not produce valid solution blocks; returning NO_FIX.")
+    return no_fix_solution(file_context)
+
 
 class AbstractProvider(ABC):
     def __init__(
@@ -65,43 +182,79 @@ class AbstractProvider(ABC):
             results.append(self.send_for_llm(file_ctx))
 
         return "\n----\n".join(results)
-    
+
+
 class GoogleAIProvider(AbstractProvider):
     @property
     def client(self):
         return genai.Client(api_key=self.ai_api_key)
 
-    def send_for_llm(self, file_context: str) -> str:
-        response = self.client.models.generate_content(
+    def _generate(self, instruction: str, content: str) -> str:
+        response = retry_request(
+            lambda: self.client.models.generate_content(
                 model=self.model,
-                config=types.GenerateContentConfig(
-                system_instruction=get_instruction("handle_solution")),
-                contents=self.context + f'\n{file_context}'
+                config=types.GenerateContentConfig(system_instruction=instruction),
+                contents=content,
             )
+        )
+        return response.text or ""
 
-        return response.text
-        
+    def send_for_llm(self, file_context: str) -> str:
+        response = self._generate(
+            get_instruction("handle_solution"),
+            build_solution_prompt(self.context, file_context),
+        )
+        return final_solution(
+            file_context,
+            response,
+            lambda bad_response: self._generate(
+                "You repair output format only. Return tags only.",
+                repair_prompt(file_context, bad_response),
+            ),
+        )
+
     def get_models_list(self):
         return [model.name for model in self.client.models.list() if model.name]
 
 
 class BaseChatProvider(AbstractProvider):
-    def _normalize_model_output(self, text: str) -> str:
-        if "<think>" in text:
-            return text.split("</think>")[-1].strip()
-        return text.strip()
+    @abstractmethod
+    def _chat(self, messages: list[dict[str, str]]) -> str:
+        ...
 
     def _solution_messages(self, file_context: str) -> list[dict[str, str]]:
         return [
             {
                 "role": "system",
-                "content": get_instruction("handle_solution")
+                "content": get_instruction("handle_solution"),
             },
             {
                 "role": "user",
-                "content": self.context + f'\n{file_context}',
+                "content": build_solution_prompt(self.context, file_context),
             },
         ]
+
+    def _repair_messages(self, file_context: str, bad_response: str) -> list[dict[str, str]]:
+        return [
+            {
+                "role": "system",
+                "content": "You repair output format only. Return tags only.",
+            },
+            {
+                "role": "user",
+                "content": repair_prompt(file_context, bad_response),
+            },
+        ]
+
+    def send_for_llm(self, file_context: str) -> str:
+        response = retry_request(lambda: self._chat(self._solution_messages(file_context)))
+        return final_solution(
+            file_context,
+            response,
+            lambda bad_response: retry_request(
+                lambda: self._chat(self._repair_messages(file_context, bad_response))
+            ),
+        )
 
 
 class DeepSeekProvider(BaseChatProvider):
@@ -142,6 +295,7 @@ class DeepSeekProvider(BaseChatProvider):
                 "model": self.model,
                 "messages": messages,
                 "stream": False,
+                "temperature": 0,
             },
         )
         choices = data.get("choices") or []
@@ -150,9 +304,6 @@ class DeepSeekProvider(BaseChatProvider):
 
         message = choices[0].get("message") or {}
         return message.get("content") or ""
-
-    def send_for_llm(self, file_context: str) -> str:
-        return self._normalize_model_output(self._chat(self._solution_messages(file_context)))
 
     def get_models_list(self) -> list[str]:
         if not self.ai_api_key:
@@ -166,17 +317,12 @@ class DeepSeekProvider(BaseChatProvider):
 
         models = [model["id"] for model in data.get("data", []) if model.get("id")]
         return models or self.fallback_models
-    
+
+
 class BaseOllamaProvider(BaseChatProvider):
-    def _chat(self, messages: list[dict[str, str]]):
-        return self.client.chat(model=self.model, messages=messages)
-
-    def send_for_llm(self, file_context: str) -> str:
-        file = self._chat(self._solution_messages(file_context))
-
-        res = file.message.content or ""
-
-        return self._normalize_model_output(res)
+    def _chat(self, messages: list[dict[str, str]]) -> str:
+        response = self.client.chat(model=self.model, messages=messages)
+        return response.message.content or ""
 
     def get_models_list(self) -> list[str]:
         return [model["model"] for model in self.client.list()["models"] if model["model"]]
@@ -210,14 +356,18 @@ class LocalOllamaProvider(BaseOllamaProvider):
         return limited
 
     def _chat(self, messages: list[dict[str, str]]):
+        options = {"temperature": 0}
+        if self.config.ollama_num_ctx and self.config.ollama_num_ctx > 0:
+            options["num_ctx"] = self.config.ollama_num_ctx
+
         kwargs = {
             "model": self.model,
             "messages": self._limit_messages(messages),
+            "options": options,
         }
-        if self.config.ollama_num_ctx and self.config.ollama_num_ctx > 0:
-            kwargs["options"] = {"num_ctx": self.config.ollama_num_ctx}
 
-        return self.client.chat(**kwargs)
+        response = self.client.chat(**kwargs)
+        return response.message.content or ""
 
     @property
     def client(self):
