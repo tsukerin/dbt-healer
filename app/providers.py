@@ -24,6 +24,7 @@ SOLUTION_BLOCK_RE = re.compile(r"<solution>(.*?)</solution>\s*<file>(.*?)</file>
 
 
 def retry_request(call, attempts: int = 3):
+    """Retry provider calls after transient network errors."""
     delay = 2
     for attempt in range(1, attempts + 1):
         try:
@@ -43,16 +44,19 @@ def retry_request(call, attempts: int = 3):
 
 
 def normalize_response(text: str) -> str:
+    """Strip model reasoning wrappers from response text."""
     if "<think>" in text:
         text = text.split("</think>")[-1]
     return text.strip()
 
 
 def source_paths(file_context: str) -> list[str]:
+    """Extract source paths from file context."""
     return list(dict.fromkeys(path.strip() for path in SOURCE_PATH_RE.findall(file_context)))
 
 
 def build_solution_prompt(context: str | list[str] | None, file_context: str) -> str:
+    """Build prompt payload for solution generation."""
     if isinstance(context, list):
         context = "\n".join(map(str, context))
     return (
@@ -62,12 +66,14 @@ def build_solution_prompt(context: str | list[str] | None, file_context: str) ->
 
 
 def no_fix_solution(file_context: str) -> str:
+    """Build fallback solution block without code changes."""
     paths = source_paths(file_context)
     file = paths[0] if paths else "NO_FILE"
     return f"<solution>NO_FIX</solution>\n<file>\n{file}\n</file>"
 
 
 def repair_prompt(file_context: str, bad_response: str) -> str:
+    """Build prompt for repairing malformed solution output."""
     paths = source_paths(file_context)
     file = paths[0] if paths else "NO_FILE"
     return f"""Your previous response did not match the required tags.
@@ -88,6 +94,7 @@ Previous response:
 
 
 def is_valid_solution(text: str, file_context: str) -> bool:
+    """Check whether model output contains valid solution blocks."""
     text = normalize_response(text)
     allowed_paths = set(source_paths(file_context))
     blocks = SOLUTION_BLOCK_RE.findall(text)
@@ -111,6 +118,7 @@ def is_valid_solution(text: str, file_context: str) -> bool:
 
 
 def final_solution(file_context: str, response: str, retry=None) -> str:
+    """Return valid solution output or a NO_FIX fallback."""
     response = normalize_response(response or "")
     if is_valid_solution(response, file_context):
         return response
@@ -134,6 +142,7 @@ class AbstractProvider(ABC):
         api_key: str | None = None,
         model: str | None = None,
     ):
+        """Initialize provider with context and model settings."""
         self.context = context
         self.config = config or get_config()
         self.ai_api_key = self.config.ai_api_key if api_key is None else api_key
@@ -142,6 +151,7 @@ class AbstractProvider(ABC):
     @property
     @abstractmethod
     def client(self):
+        """Return provider client instance."""
         ...
 
     @abstractmethod
@@ -187,9 +197,11 @@ class AbstractProvider(ABC):
 class GoogleAIProvider(AbstractProvider):
     @property
     def client(self):
+        """Return Google GenAI client."""
         return genai.Client(api_key=self.ai_api_key)
 
     def _generate(self, instruction: str, content: str) -> str:
+        """Generate content with Google AI."""
         response = retry_request(
             lambda: self.client.models.generate_content(
                 model=self.model,
@@ -200,6 +212,7 @@ class GoogleAIProvider(AbstractProvider):
         return response.text or ""
 
     def send_for_llm(self, file_context: str) -> str:
+        """Send source context to Google AI and normalize solution."""
         response = self._generate(
             get_instruction("handle_solution"),
             build_solution_prompt(self.context, file_context),
@@ -214,15 +227,18 @@ class GoogleAIProvider(AbstractProvider):
         )
 
     def get_models_list(self):
+        """Return available Google AI model names."""
         return [model.name for model in self.client.models.list() if model.name]
 
 
 class BaseChatProvider(AbstractProvider):
     @abstractmethod
     def _chat(self, messages: list[dict[str, str]]) -> str:
+        """Send chat messages to provider."""
         ...
 
     def _solution_messages(self, file_context: str) -> list[dict[str, str]]:
+        """Build messages for solution generation."""
         return [
             {
                 "role": "system",
@@ -235,6 +251,7 @@ class BaseChatProvider(AbstractProvider):
         ]
 
     def _repair_messages(self, file_context: str, bad_response: str) -> list[dict[str, str]]:
+        """Build messages for solution format repair."""
         return [
             {
                 "role": "system",
@@ -247,6 +264,7 @@ class BaseChatProvider(AbstractProvider):
         ]
 
     def send_for_llm(self, file_context: str) -> str:
+        """Send source context to chat provider and normalize solution."""
         response = retry_request(lambda: self._chat(self._solution_messages(file_context)))
         return final_solution(
             file_context,
@@ -263,6 +281,7 @@ class DeepSeekProvider(BaseChatProvider):
 
     @property
     def client(self):
+        """Return configured DeepSeek HTTP session."""
         session = requests.Session()
         session.headers.update({
             "Authorization": f"Bearer {self.ai_api_key}",
@@ -271,6 +290,7 @@ class DeepSeekProvider(BaseChatProvider):
         return session
 
     def _request(self, method: str, path: str, **kwargs) -> dict:
+        """Perform DeepSeek API request."""
         response = self.client.request(
             method=method,
             url=f"{self.base_url}{path}",
@@ -288,6 +308,7 @@ class DeepSeekProvider(BaseChatProvider):
         return response.json()
 
     def _chat(self, messages: list[dict[str, str]]) -> str:
+        """Send chat completion request to DeepSeek."""
         data = self._request(
             "POST",
             "/chat/completions",
@@ -306,6 +327,7 @@ class DeepSeekProvider(BaseChatProvider):
         return message.get("content") or ""
 
     def get_models_list(self) -> list[str]:
+        """Return available DeepSeek model names."""
         if not self.ai_api_key:
             return self.fallback_models
 
@@ -321,15 +343,18 @@ class DeepSeekProvider(BaseChatProvider):
 
 class BaseOllamaProvider(BaseChatProvider):
     def _chat(self, messages: list[dict[str, str]]) -> str:
+        """Send chat request to Ollama."""
         response = self.client.chat(model=self.model, messages=messages)
         return response.message.content or ""
 
     def get_models_list(self) -> list[str]:
+        """Return available Ollama model names."""
         return [model["model"] for model in self.client.list()["models"] if model["model"]]
 
 
 class LocalOllamaProvider(BaseOllamaProvider):
     def _limit_text(self, text: str) -> str:
+        """Limit local Ollama prompt size."""
         max_chars = self.config.ai_max_input_chars
         if not max_chars or max_chars <= 0 or len(text) <= max_chars:
             return text
@@ -348,6 +373,7 @@ class LocalOllamaProvider(BaseOllamaProvider):
         return text[:head] + marker + text[-tail:]
 
     def _limit_messages(self, messages: list[dict[str, str]]) -> list[dict[str, str]]:
+        """Limit user messages for local Ollama."""
         limited = []
         for message in messages:
             if message.get("role") == "user":
@@ -356,6 +382,7 @@ class LocalOllamaProvider(BaseOllamaProvider):
         return limited
 
     def _chat(self, messages: list[dict[str, str]]):
+        """Send chat request to local Ollama."""
         options = {"temperature": 0}
         if self.config.ollama_num_ctx and self.config.ollama_num_ctx > 0:
             options["num_ctx"] = self.config.ollama_num_ctx
@@ -371,6 +398,7 @@ class LocalOllamaProvider(BaseOllamaProvider):
 
     @property
     def client(self):
+        """Return local Ollama client."""
         if self.config.ollama_host:
             return Client(host=self.config.ollama_host)
         return Client()
@@ -379,6 +407,7 @@ class LocalOllamaProvider(BaseOllamaProvider):
 class APIOllamaProvider(BaseOllamaProvider):
     @property
     def client(self):
+        """Return Ollama cloud API client."""
         return Client(
             host="https://ollama.com",
             headers={'Authorization': 'Bearer ' + self.ai_api_key}

@@ -22,6 +22,7 @@ class OllamaProviderType(str, Enum):
 
 
 def build_provider(ai_provider: ProviderType | str, **kwargs) -> AbstractProvider:
+    """Build AI provider by configured provider name."""
     provider_aliases = {
         "DeepSeek": ProviderType.DEEPSEEK.value,
     }

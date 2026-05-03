@@ -43,6 +43,7 @@ async def command_start_handler(message: Message) -> None:
     await message.answer(f"Привет, {html.bold(message.from_user.full_name)}!\nТы успешно подписался на обновление Pull Request!")
 
 async def main() -> None:
+    """Start Telegram bot polling."""
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

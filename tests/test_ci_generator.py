@@ -9,6 +9,7 @@ from common.exceptions import DBTProfilesExistsError
 
 class CIGeneratorTests(unittest.TestCase):
     def test_create_ci_profile_requires_existing_profiles_file(self):
+        """Check missing profiles.yml raises explicit error."""
         with tempfile.TemporaryDirectory() as tmp:
             config = SimpleNamespace(
                 full_path_to_repo=Path(tmp),
@@ -28,6 +29,7 @@ class CIGeneratorTests(unittest.TestCase):
                 generator.create_ci_profile()
 
     def test_create_ci_profile_appends_ci_target_once(self):
+        """Check CI profile is appended only once."""
         with tempfile.TemporaryDirectory() as tmp:
             project_path = Path(tmp) / "analytics"
             project_path.mkdir()
@@ -54,4 +56,3 @@ class CIGeneratorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

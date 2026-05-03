@@ -19,6 +19,7 @@ app = typer.Typer(help="DBT Healer CLI")
 
 @app.command(help="Setup your enviroment for dbt-healer")
 def setup():
+    """Run interactive dbt-healer setup."""
     config_dict = {}
     first_setup = True
     answer = ""
@@ -165,6 +166,7 @@ def setup():
 
 @app.command(help="Serve dbt-healer analyzer")
 def serve(port: int = 8888):
+    """Start analyzer services with Docker Compose."""
     console.print(Markdown(f"Starting **dbt-healer** server on port {port}..."))
     config = get_config()
 

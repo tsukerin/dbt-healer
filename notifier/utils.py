@@ -12,6 +12,7 @@ from common.config import get_config
 config = get_config()
 
 def get_last_pr():
+    """Return repository pull requests from GitHub."""
     url = f"https://api.github.com/repos/{config.github_name}/{config.github_repo}/pulls"
     headers = {}
     headers['Authorization'] = f'token {config.github_token}'
@@ -23,6 +24,7 @@ def get_last_pr():
     return data
 
 async def notify_about_pr(files: str) -> None:
+    """Notify subscribed chats about latest pull request."""
     conn = await asyncpg.connect(
         host='db',
         database=config.dbt_project_name,

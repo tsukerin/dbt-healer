@@ -6,7 +6,8 @@ DBT_NODE_RESOURCE_TYPES = ("model", "snapshot", "seed", "macro")
 
 class DbtRegularExpressions:
     def _compile_dbt_log_pattern(pattern: str) -> re.Pattern[str]:
-       return re.compile(pattern, re.IGNORECASE | re.VERBOSE)
+        """Compile dbt log pattern with shared flags."""
+        return re.compile(pattern, re.IGNORECASE | re.VERBOSE)
 
 
     ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")

@@ -10,6 +10,7 @@ dotenv_path = Path(__file__).resolve().parents[1] / ".env"
 
 
 def parse_github_repo_link(repo_link: str | None) -> tuple[str | None, str | None]:
+    """Parse GitHub repository link into owner and repository name."""
     if not repo_link:
         return None, None
 
@@ -61,6 +62,7 @@ class Config(BaseSettings):
     @field_validator("github_repo_link")
     @classmethod
     def normalize_github_link(cls, v: str) -> str:
+        """Normalize GitHub repository link to clone URL form."""
         if not v.endswith(".git"):
             v = v.rstrip("/") + ".git"
         return v
@@ -68,6 +70,7 @@ class Config(BaseSettings):
     @field_validator("service_endpoint")
     @classmethod
     def normalize_service_endpoint(cls, v: str) -> str:
+        """Normalize service endpoint to analyzer URL."""
         if v.startswith("http://"):
             v = "https://" + v.removeprefix("http://")
         if not v.endswith("/analyze/"):
@@ -76,42 +79,51 @@ class Config(BaseSettings):
 
     @property
     def github_owner_repo(self) -> tuple[str | None, str | None]:
+        """Return configured GitHub owner and repository name."""
         return parse_github_repo_link(self.github_repo_link)
 
     @property
     def github_name(self) -> str | None:
+        """Return configured GitHub owner."""
         return self.github_owner_repo[0]
 
     @property
     def github_repo(self) -> str | None:
+        """Return configured GitHub repository name."""
         return self.github_owner_repo[1]
 
     @property
     def repo_root(self) -> Path:
+        """Return local path for cloned failed repository."""
         return Path.home() / ".failedrepo" / (self.github_repo or "")
 
     @property
     def logs_file(self) -> Path:
+        """Return path to stored error hashes."""
         return self.repo_root / "logs" / "err_hashes.txt"
 
     @property
     def dbt_log(self) -> Path:
+        """Return path to dbt log in failed repository."""
         if self.dbt_project_name:
             return self.repo_root / self.dbt_project_name / "logs" / "dbt.log"
         return self.repo_root / "logs" / "dbt.log"
 
     @property
     def uploaded_dbt_log(self) -> Path:
+        """Return path to uploaded CI dbt log."""
         return self.repo_root / "logs" / "payload_dbt.log"
 
     @property
     def get_profiles_path(self) -> Path:
+        """Return dbt profiles.yml path when it exists."""
         path = self.full_path_to_repo / self.dbt_project_name / "profiles.yml"
 
         return path if path.exists() else None
 
     @property
     def db_dbt_schema(self) -> str:
+        """Return dbt schema from profiles.yml."""
         if not self.full_path_to_repo or not self.dbt_project_name or not self.get_profiles_path:
             return None
 
@@ -124,6 +136,7 @@ class Config(BaseSettings):
     
     @property
     def db_dbt_database(self) -> str:
+        """Return dbt database from profiles.yml."""
         if not self.full_path_to_repo or not self.dbt_project_name or not self.get_profiles_path:
             return None
 
@@ -136,17 +149,21 @@ class Config(BaseSettings):
 
     @property
     def bot_token(self) -> str:
+        """Return configured Telegram bot token."""
         return self.telegram_bot_token
     
     @property
     def full_path_to_repo(self) -> Path:
+        """Return configured local repository path."""
         return Path(self.full_path_to_repo_str)
     
     @property
     def path_to_dbt_proj(self) -> Path:
+        """Return configured local dbt project path."""
         return self.full_path_to_repo / self.dbt_project_name
 
     def save(self, config_dict: dict[str, str | None]) -> bool:
+        """Persist configuration values to .env file."""
         try:
             data = self.model_dump()
             data.update({key: val for key, val in config_dict.items() if val is not None})
@@ -199,6 +216,7 @@ class Config(BaseSettings):
         return True
 
     def __str__(self) -> str:
+        """Return printable configuration with secrets masked."""
         return (
             f"SERVICE_ENDPOINT: {self.service_endpoint}\n"
             f"GITHUB_REPO_LINK: {self.github_repo_link}\n"
@@ -221,4 +239,5 @@ class Config(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_config() -> Config:
+    """Return cached application configuration."""
     return Config()

@@ -22,6 +22,7 @@ def upload_failure(
     dbt_path: str,
     log_file: UploadFile
 ):
+    """Process uploaded CI failure in background."""
     logging.info(
         "dbt failure received: repo=%s commit=%s path=%s log=%s",
         repo, commit_hash, dbt_path
@@ -33,6 +34,7 @@ def upload_failure(
 
 @app.get("/health/")
 def health():
+    """Return service health status."""
     return {"status": "healer is healthy"}
 
 @app.post("/analyze/")
@@ -43,6 +45,7 @@ def analyze(
     dbt_path: str = Form(...),
     log_file: UploadFile = File(...),
 ):
+    """Accept CI failure payload for async analysis."""
     try:
         background_tasks.add_task(
             upload_failure,

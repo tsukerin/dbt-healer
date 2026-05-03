@@ -9,12 +9,15 @@ from app import utils
 
 class DbtLogParsingTests(unittest.TestCase):
     def setUp(self):
+        """Store original utils config."""
         self.original_config = utils.config
 
     def tearDown(self):
+        """Restore original utils config."""
         utils.config = self.original_config
 
     def test_extracts_explicit_model_path_from_dbt_error(self):
+        """Check explicit model path is extracted from dbt error."""
         log = "Database Error in model customers (models/core/customers.sql)"
 
         self.assertEqual(
@@ -23,6 +26,7 @@ class DbtLogParsingTests(unittest.TestCase):
         )
 
     def test_extracts_macro_path_from_dbt_error(self):
+        """Check macro path is extracted from dbt error."""
         log = "Compilation Error in macro cents_to_dollars (macros/money.sql)"
 
         self.assertEqual(
@@ -31,6 +35,7 @@ class DbtLogParsingTests(unittest.TestCase):
         )
 
     def test_resolves_model_name_from_manifest(self):
+        """Check model name resolves through manifest."""
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp)
             project_path = repo_root / "jaffle_shop"
@@ -60,6 +65,7 @@ class DbtLogParsingTests(unittest.TestCase):
             )
 
     def test_test_failure_resolves_tested_model_from_manifest(self):
+        """Check test failure resolves tested model through manifest."""
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp)
             project_path = repo_root / "shops_dwh"
@@ -99,6 +105,7 @@ class DbtLogParsingTests(unittest.TestCase):
             )
 
     def test_test_failure_infers_model_from_test_name_without_manifest(self):
+        """Check test failure infers model name without manifest."""
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp)
             project_path = repo_root / "shops_dwh"
@@ -115,6 +122,7 @@ class DbtLogParsingTests(unittest.TestCase):
             )
 
     def test_unresolved_test_failure_does_not_fall_back_to_yaml_doc(self):
+        """Check unresolved test failure does not use yaml doc path."""
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp)
             project_path = repo_root / "shops_dwh"
@@ -126,6 +134,7 @@ class DbtLogParsingTests(unittest.TestCase):
             self.assertEqual(utils.get_error_files_from_dbt_log(log), [])
 
     def test_clean_log_removes_ansi_escape_sequences(self):
+        """Check ANSI escape sequences are ignored in dbt log."""
         log = "\x1b[31mDatabase Error in model customers (models/core/customers.sql)\x1b[0m"
 
         self.assertEqual(

@@ -22,6 +22,7 @@ class AbstractCIGenerator(ABC):
         ...
 
     def __init__(self, config: Config | None = None):
+        """Initialize generator with config and dbt path."""
         self.config = config or get_config()
         self.dbt_path = self.config.full_path_to_repo / self.config.dbt_project_name
 
@@ -66,10 +67,12 @@ class AbstractCIGenerator(ABC):
 class GithubCIGenerator(AbstractCIGenerator):
     @property
     def ci_dir(self):
+        """Return GitHub Actions workflows directory."""
         return self.dbt_path.parent / ".github" / "workflows"
     
     @property
     def ci_content(self):
+        """Return GitHub Actions template path."""
         return self.APP_DIR / "common" / "ci_examples" / "ci_example_github.yml"
 
     def create_ci_file(self):

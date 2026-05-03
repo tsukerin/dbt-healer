@@ -17,6 +17,7 @@ config = get_config()
 exp = DbtRegularExpressions()
 
 def get_failed_repo_path() -> Path:
+    """Return checked-out dbt project path."""
     if not config.dbt_project_name:
         raise RuntimeError("DBT_PROJECT_NAME is not configured")
 
@@ -28,16 +29,19 @@ def get_failed_repo_path() -> Path:
 
 
 def _dedupe(items: list[str]) -> list[str]:
+    """Return non-empty items without duplicates."""
     return list(dict.fromkeys(item for item in items if item))
 
 
 def _clean_log_text(log_text: str | list[str] | None) -> str:
+    """Normalize log text and remove ANSI escapes."""
     if isinstance(log_text, list):
         log_text = "\n".join(log_text)
     return exp.ANSI_ESCAPE_RE.sub("", str(log_text or ""))
 
 
 def _normalize_dbt_source_path(raw_path: str | None) -> str | None:
+    """Normalize raw path to a dbt source path."""
     if not raw_path:
         return None
 
@@ -58,6 +62,7 @@ def _normalize_dbt_source_path(raw_path: str | None) -> str | None:
 
 
 def _read_dbt_manifest() -> dict:
+    """Read dbt manifest from failed repository."""
     try:
         manifest_path = get_failed_repo_path() / "target" / "manifest.json"
     except RuntimeError:
@@ -75,6 +80,7 @@ def _read_dbt_manifest() -> dict:
 
 
 def _resolve_manifest_source(resource_name: str | None) -> str | None:
+    """Resolve dbt resource name through manifest metadata."""
     if not resource_name:
         return None
 
@@ -112,6 +118,7 @@ def _resolve_manifest_source(resource_name: str | None) -> str | None:
 
 
 def _resolve_test_failure_source(test_name: str | None, raw_path: str | None) -> str | None:
+    """Resolve tested source file for dbt test failure."""
     if not test_name:
         return None
 
@@ -156,6 +163,7 @@ def _resolve_test_failure_source(test_name: str | None, raw_path: str | None) ->
 
 
 def _resolve_source_file(resource_name: str | None) -> str | None:
+    """Resolve dbt source file by resource name."""
     resolved = _resolve_manifest_source(resource_name)
     if resolved:
         return resolved
@@ -187,6 +195,7 @@ def _resolve_dbt_error_reference(
     resource_name: str | None,
     raw_path: str | None,
 ) -> str | None:
+    """Resolve dbt error reference to source file path."""
     if resource_type and resource_type.lower() == "test":
         return _resolve_test_failure_source(resource_name, raw_path)
 
@@ -281,6 +290,7 @@ def get_context_log() -> str:
 
 
 def _relative_to_failed_repo(path: Path) -> str:
+    """Return path relative to failed repository when possible."""
     try:
         return path.relative_to(get_failed_repo_path()).as_posix()
     except (RuntimeError, ValueError):
@@ -288,6 +298,7 @@ def _relative_to_failed_repo(path: Path) -> str:
 
 
 def _git_revision_exists(repo_path: Path, revision: str) -> bool:
+    """Check whether git revision exists in repository."""
     return subprocess.run(
         ["git", "rev-parse", "--verify", "--quiet", revision],
         cwd=repo_path,
@@ -296,6 +307,7 @@ def _git_revision_exists(repo_path: Path, revision: str) -> bool:
 
 
 def _get_file_diff(path: Path) -> str:
+    """Return diff for source file against available base revision."""
     try:
         failed_repo_path = get_failed_repo_path()
         relative_path = path.relative_to(failed_repo_path)
@@ -325,6 +337,7 @@ def _get_file_diff(path: Path) -> str:
 
 
 def get_file_context(files: list[str] | str) -> str:
+    """Build source, diff, and lineage context for files."""
     sources = []
 
     if isinstance(files, str):
@@ -369,10 +382,12 @@ def get_instruction(name: str) -> str:
 
 
 def has_dbt_dependencies(dbt_project_path: Path) -> bool:
+    """Check whether dbt project declares package dependencies."""
     return any((dbt_project_path / name).exists() for name in ("packages.yml", "dependencies.yml"))
 
 
 def prepare_dbt_metadata(dbt_project_path: Path) -> None:
+    """Refresh dbt dependencies and manifest metadata."""
     if has_dbt_dependencies(dbt_project_path):
         try:
             subprocess.run(["dbt", "deps"], cwd=dbt_project_path, check=True)
@@ -393,6 +408,7 @@ def prepare_dbt_metadata(dbt_project_path: Path) -> None:
 
 
 def clone_repo_from_ci(repo: str, commit_hash: str, dbt_path: str, log_file: BinaryIO) -> None:
+    """Clone failed repository and store uploaded dbt log."""
     workdir = Path(Path.home() / ".failedrepo")
     workdir.mkdir(parents=True, exist_ok=True)
 
@@ -429,6 +445,7 @@ def _relevant_lineage_context(
     relationship: str,
     max_chars: int = 2600,
 ) -> str:
+    """Return focused lineage context for related model source."""
     if len(text) <= max_chars:
         return text
 
@@ -461,6 +478,7 @@ def _relevant_lineage_context(
 
 
 def parse_lineage_models(model: str) -> dict[str, str]:
+    """Collect upstream and downstream model context from manifest."""
     failed_repo_path = get_failed_repo_path()
     manifest_path = failed_repo_path / "target" / "manifest.json"
     if not manifest_path.exists():
