@@ -65,7 +65,6 @@ jobs:
             echo "macros, seeds or snapshots changes detected. starting full build..."
             cd {dbt_project_name}
             dbt build --profile ci --target ci
-            exit 0
           fi
 
           CHANGED_MODELS=$(
@@ -78,7 +77,7 @@ jobs:
           cd {dbt_project_name}
           if [[ -n "${CHANGED_MODELS:-}" ]]; then
             echo "changed models found. get started..."
-            dbt build --profile ci --target ci --select $CHANGED_MODELS
+            dbt build --profile ci --target ci --select $CHANGED_MODELS --indirect-selection buildable
           else
             echo "changed models not found. get started full build..."
             dbt build --profile ci --target ci
