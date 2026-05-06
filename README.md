@@ -32,7 +32,9 @@ Core modules:
 
 - `cli.py` - interactive setup and Docker Compose launcher.
 - `service/failure_ingest.py` - FastAPI webhook receiver.
-- `app/utils.py` - dbt log parsing, repo clone, context collection, lineage retrieval.
+- `app/utils.py` - dbt log parsing, repo clone, and dbt metadata setup.
+- `app/context.py` - source, diff, and lineage context extraction.
+- `app/rag.py` - focused lineage snippets using LangChain, FAISS, and Ollama embeddings.
 - `app/providers.py` - Ollama, Google AI Studio, and DeepSeek providers.
 - `app/push_repo.py` - solution parsing and GitHub PR updates.
 - `app/ci_generator.py` - GitHub Actions workflow and dbt `profiles.yml` CI profile generation.
@@ -147,4 +149,3 @@ This project is still a prototype-quality automation tool. Before exposing it pu
 - persistent job status and failure reporting
 
 The AI output is treated defensively: malformed responses become `NO_FIX`, but generated SQL should still be validated by dbt before trusting the PR.
-

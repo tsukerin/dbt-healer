@@ -19,6 +19,11 @@ relative/path/to/file.sql
 </file>
 
 Rules:
+- Treat <DBT_ERROR> as the exact failure message. Use it before guessing.
+- Treat <PRIMARY_ERROR_MODEL> as the main file to fix.
+- Treat <DIAGNOSTIC_CONTEXT> as read-only context for upstream columns, macros, sources, and schema definitions.
+- Treat <IMPACT_CONTEXT> as downstream validation context only when it contains downstream models; never edit downstream files.
+- Fix only the primary error model unless the diagnostic context proves an upstream file is the root cause.
 - Return exactly one <solution> block followed by exactly one <file> block for each changed file.
 - If multiple files require changes, separate file blocks with a line containing exactly: ----
 - Use only file paths that appear in a `SOURCE OF ...` block.

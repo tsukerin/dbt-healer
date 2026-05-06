@@ -4,6 +4,26 @@ DBT_SOURCE_DIRS = ("models", "snapshots", "seeds", "analyses", "macros", "tests"
 DBT_SOURCE_EXTENSIONS = (".sql", ".yml", ".yaml")
 DBT_NODE_RESOURCE_TYPES = ("model", "snapshot", "seed", "macro")
 
+SQL_STOP_WORDS = {
+    "and", "as", "by", "case", "cast", "else", "end", "false", "from",
+    "group", "having", "join", "left", "not", "null", "on", "or", "order",
+    "right", "select", "then", "true", "when", "where", "with",
+}
+
+SQL_IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][\w$]*\b")
+SQL_QUOTED_IDENTIFIER_RE = re.compile(r"[`'\"]([A-Za-z_][\w$.]*|[A-Za-z_][\w$]*\.[A-Za-z_][\w$]*)[`'\"]")
+SQL_ERROR_SIGNAL_RE = re.compile(
+    r"\b(?:column|field|identifier|relation|table|model|macro|source|alias)\s+"
+    r"[`'\"]?(?P<name>[A-Za-z_][\w$.]*)",
+    re.IGNORECASE,
+)
+SQL_REF_RE = re.compile(r"\b(?:ref|source)\s*\(\s*['\"]([^'\"]+)['\"](?:\s*,\s*['\"]([^'\"]+)['\"])?", re.IGNORECASE)
+SQL_MACRO_CALL_RE = re.compile(r"{{\s*([A-Za-z_][\w.]*)\s*\(", re.IGNORECASE)
+SQL_ALIAS_RE = re.compile(r"\bas\s+([A-Za-z_][\w$]*)\b", re.IGNORECASE)
+SQL_CTE_RE = re.compile(r"(?:\bwith|,)\s+([A-Za-z_][\w$]*)\s+as\s*\(", re.IGNORECASE)
+SQL_CONFIG_RE = re.compile(r"{{\s*config\s*\((.*?)\)\s*}}", re.IGNORECASE | re.DOTALL)
+
+
 class DbtRegularExpressions:
     def _compile_dbt_log_pattern(pattern: str) -> re.Pattern[str]:
         """Compile dbt log pattern with shared flags."""

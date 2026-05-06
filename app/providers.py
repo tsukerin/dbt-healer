@@ -9,7 +9,8 @@ from google.genai import types
 from ollama import Client, RequestError as OllamaRequestError
 
 from common.config import Config, get_config
-from app.utils import get_error_files_from_dbt_log, get_file_context, get_instruction
+from app.context import get_file_context
+from app.utils import get_error_files_from_dbt_log, get_instruction
 
 TRANSIENT_PROVIDER_ERRORS = (
     requests.ConnectionError,
@@ -60,7 +61,7 @@ def build_solution_prompt(context: str | list[str] | None, file_context: str) ->
     if isinstance(context, list):
         context = "\n".join(map(str, context))
     return (
-        f"<DBT_LOG>\n{context or ''}\n</DBT_LOG>\n\n"
+        f"<DBT_ERROR>\n{context or ''}\n</DBT_ERROR>\n\n"
         f"<SOURCE_CONTEXT>\n{file_context}\n</SOURCE_CONTEXT>"
     )
 
