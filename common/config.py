@@ -2,27 +2,36 @@ from functools import lru_cache
 from pathlib import Path
 import logging
 import re
-import os
+
 from dotenv import set_key
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 dotenv_path = Path(__file__).resolve().parents[1] / ".env"
 
 
 def parse_github_repo_link(repo_link: str | None) -> tuple[str | None, str | None]:
-    """Parse GitHub repository link into owner and repository name."""
+    """Parse repository link into namespace and repository name."""
     if not repo_link:
         return None, None
 
-    match = re.match(
-        r"^(?:https?://|git@)?(?:www\.)?github\.com[:/](?P<owner>[^/\s]+)/(?P<repo>[^/\s]+?)(?:\.git)?/?$",
-        repo_link.strip(),
-    )
-    if not match:
+    link = repo_link.strip().removesuffix(".git").rstrip("/")
+    if link.startswith("git@"):
+        _, path = link.split(":", 1)
+    else:
+        match = re.match(r"^(?:https?://)?(?:www\.)?[^/\s]+/(?P<path>.+)$", link)
+        if not match:
+            logging.warning("Unable to parse GITHUB_REPO_LINK: %s", repo_link)
+            return None, None
+        path = match.group("path")
+
+    parts = [part for part in path.split("/") if part]
+    if len(parts) < 2:
         logging.warning("Unable to parse GITHUB_REPO_LINK: %s", repo_link)
         return None, None
 
-    return match.group("owner"), match.group("repo")
+    return "/".join(parts[:-1]), parts[-1]
+
 
 class Config(BaseSettings):
     model_config = SettingsConfigDict(
@@ -34,6 +43,7 @@ class Config(BaseSettings):
     service_endpoint: str = Field(default="localhost", validation_alias="SERVICE_ENDPOINT")
 
     github_repo_link: str = Field(default="", validation_alias="GITHUB_REPO_LINK")
+    git_platform: str = Field(default="Github", validation_alias="GIT_PLATFORM")
     ai_provider: str = Field(default="Ollama", validation_alias="AI_PROVIDER")
     ai_provider_type: str = Field(default="Ollama (API)", validation_alias="AI_PROVIDER_TYPE")
     ai_api_key: str = Field(default="", validation_alias="AI_API_KEY")
@@ -63,6 +73,8 @@ class Config(BaseSettings):
     @classmethod
     def normalize_github_link(cls, v: str) -> str:
         """Normalize GitHub repository link to clone URL form."""
+        if not v:
+            return ""
         if not v.endswith(".git"):
             v = v.rstrip("/") + ".git"
         return v
@@ -127,23 +139,21 @@ class Config(BaseSettings):
         if not self.full_path_to_repo or not self.dbt_project_name or not self.get_profiles_path:
             return None
 
-        with open(self.get_profiles_path, mode="r") as f:
-            lines = f.readlines()
-            schema = re.search(pattern=r'schema:\s*(?P<schema>\S+)', string=''.join(lines))
-        if not schema: 
+        with open(self.get_profiles_path, mode="r", encoding="utf-8") as f:
+            schema = re.search(pattern=r"schema:\s*(?P<schema>\S+)", string=f.read())
+        if not schema:
             return
         return schema.group("schema").strip()
-    
+
     @property
     def db_dbt_database(self) -> str:
         """Return dbt database from profiles.yml."""
         if not self.full_path_to_repo or not self.dbt_project_name or not self.get_profiles_path:
             return None
 
-        with open(self.get_profiles_path, mode="r") as f:
-            lines = f.readlines()
-            dbname = re.search(pattern=r'dbname:\s*(?P<database>\S+)', string=''.join(lines))
-        if not dbname: 
+        with open(self.get_profiles_path, mode="r", encoding="utf-8") as f:
+            dbname = re.search(pattern=r"dbname:\s*(?P<database>\S+)", string=f.read())
+        if not dbname:
             return
         return dbname.group("database").strip()
 
@@ -151,12 +161,12 @@ class Config(BaseSettings):
     def bot_token(self) -> str:
         """Return configured Telegram bot token."""
         return self.telegram_bot_token
-    
+
     @property
     def full_path_to_repo(self) -> Path:
         """Return configured local repository path."""
         return Path(self.full_path_to_repo_str)
-    
+
     @property
     def path_to_dbt_proj(self) -> Path:
         """Return configured local dbt project path."""
@@ -185,6 +195,7 @@ class Config(BaseSettings):
 
             set_key(dotenv_path, "GITHUB_REPO_LINK", str(data.get("github_repo_link", self.github_repo_link) or ""))
             set_key(dotenv_path, "GITHUB_TOKEN", str(data.get("github_token", self.github_token) or ""))
+            set_key(dotenv_path, "GIT_PLATFORM", str(data.get("git_platform", self.git_platform) or "Github"))
             set_key(dotenv_path, "BASE_BRANCH", str(data.get("base_branch", self.base_branch) or "master"))
 
             set_key(dotenv_path, "TELEGRAM_BOT_TOKEN", str(data.get("telegram_bot_token", self.telegram_bot_token) or ""))
@@ -220,6 +231,7 @@ class Config(BaseSettings):
         return (
             f"SERVICE_ENDPOINT: {self.service_endpoint}\n"
             f"GITHUB_REPO_LINK: {self.github_repo_link}\n"
+            f"GIT_PLATFORM: {self.git_platform}\n"
             f"AI_PROVIDER: {self.ai_provider}\n"
             f"AI_PROVIDER_TYPE: {self.ai_provider_type}\n"
             f"AI_API_KEY: {'***' if self.ai_api_key else None}\n"

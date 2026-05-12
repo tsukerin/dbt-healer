@@ -190,6 +190,7 @@ class AbstractProvider(ABC):
             if not file_ctx:
                 logging.warning("No file context found for: %s", file)
                 continue
+            logging.info("File context for %s:\n%s", file, file_ctx)
             results.append(self.send_for_llm(file_ctx))
 
         return "\n----\n".join(results)

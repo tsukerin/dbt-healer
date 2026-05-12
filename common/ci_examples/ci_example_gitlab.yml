@@ -1,0 +1,73 @@
+image: python:3.11
+
+stages:
+  - build
+
+variables:
+  POSTGRES_USER: {db_user}
+  POSTGRES_PASSWORD: {db_password}
+  POSTGRES_DB: {db_name}
+  DBT_PROFILES_DIR: "$CI_PROJECT_DIR/{dbt_project_name}"
+
+services:
+  - name: postgres:15
+    alias: postgres
+
+dbt_build:
+  stage: build
+  before_script:
+    - pip install -r requirements.txt
+    - "sed -i '/^ci:/,$ s/host: localhost/host: postgres/' shops_dwh/profiles.yml"
+  script:
+    - |
+      set -euo pipefail
+
+      cd {dbt_project_name}
+      dbt deps
+      cd "$CI_PROJECT_DIR"
+
+      BEFORE="$CI_COMMIT_BEFORE_SHA"
+      AFTER="$CI_COMMIT_SHA"
+
+      if [[ "$BEFORE" =~ ^0+$ ]]; then
+        git fetch origin {base_branch} --depth=1
+        DIFF_RANGE="origin/{base_branch}...$AFTER"
+      else
+        DIFF_RANGE="$BEFORE $AFTER"
+      fi
+
+      CHANGED_FILES=$(git diff --name-only $DIFF_RANGE -- '{dbt_project_name}/**' || true)
+      echo "$CHANGED_FILES"
+
+      if echo "$CHANGED_FILES" | grep -Eq '^{dbt_project_name}/(macros/|seeds/|snapshots/|dbt_project\.yml|packages\.yml)'; then
+        echo "macros, seeds or snapshots changes detected. starting full build..."
+        cd {dbt_project_name}
+        dbt build --profile ci --target ci
+        exit 0
+      fi
+
+      CHANGED_MODELS=$(
+        echo "$CHANGED_FILES" \
+        | grep -E '^{dbt_project_name}/models/.*\.sql$' \
+        | sed -E 's#.*/##; s/\.sql$//; s#^#@#' \
+        | xargs || true
+      )
+
+      cd {dbt_project_name}
+      if [[ -n "${CHANGED_MODELS:-}" ]]; then
+        echo "changed models found. get started..."
+        dbt build --profile ci --target ci --select $CHANGED_MODELS --indirect-selection buildable
+      else
+        echo "changed models not found. get started full build..."
+        dbt build --profile ci --target ci
+      fi
+  after_script:
+    - |
+      if [[ "$CI_JOB_STATUS" == "failed" && "$CI_COMMIT_REF_NAME" == feature/* && -f "{dbt_project_name}/logs/dbt.log" ]]; then
+        curl -X 'POST' \
+          '{service_endpoint}' \
+          -F "repo={github_link}" \
+          -F "commit_hash=$CI_COMMIT_SHA" \
+          -F "dbt_path={dbt_project_name}" \
+          -F "log_file=@{dbt_project_name}/logs/dbt.log"
+      fi

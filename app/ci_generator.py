@@ -21,6 +21,12 @@ class AbstractCIGenerator(ABC):
         """CI content path."""
         ...
 
+    @property
+    @abstractmethod
+    def ci_file_name(self):
+        """CI filename."""
+        ...
+
     def __init__(self, config: Config | None = None):
         """Initialize generator with config and dbt path."""
         self.config = config or get_config()
@@ -53,41 +59,24 @@ class AbstractCIGenerator(ABC):
             f"      dbname: {self.config.db_dbt_database}\n"
             f"      schema: {self.config.db_dbt_schema}\n"
         )
-        
+
         with open(self.dbt_path / "profiles.yml", "a", encoding="utf-8") as f:
             f.write(ci_profile)
 
         return "created"
 
-    @abstractmethod
     def create_ci_file(self):
-        """Creates CI file in the project."""
-        ...
-
-class GithubCIGenerator(AbstractCIGenerator):
-    @property
-    def ci_dir(self):
-        """Return GitHub Actions workflows directory."""
-        return self.dbt_path.parent / ".github" / "workflows"
-    
-    @property
-    def ci_content(self):
-        """Return GitHub Actions template path."""
-        return self.APP_DIR / "common" / "ci_examples" / "ci_example_github.yml"
-
-    def create_ci_file(self):
-        """Creates CI file for GitHub Actions."""
-        ci_file = self.ci_dir / "ci.yml"
+        """Creates CI file for configured CI provider."""
+        ci_file = self.ci_dir / self.ci_file_name
         ci_file.parent.mkdir(parents=True, exist_ok=True)
 
-        if ci_file.exists() and len(ci_file.read_text()) > 0:
+        if ci_file.exists() and ci_file.read_text(encoding="utf-8"):
             logging.warning("CI file already exists. Skipping creation.")
             return "exists"
 
         try:
             content = self.ci_content.read_text(encoding="utf-8")
-
-            for_replace = {
+            for key, val in {
                 "{service_endpoint}": self.config.service_endpoint,
                 "{github_link}": self.config.github_repo_link,
                 "{dbt_project_name}": self.config.dbt_project_name,
@@ -95,17 +84,46 @@ class GithubCIGenerator(AbstractCIGenerator):
                 "{db_user}": self.config.db_dbt_username,
                 "{db_password}": self.config.db_dbt_password,
                 "{db_name}": self.config.db_dbt_database,
-            }
-
-            for key, val in for_replace.items():
+            }.items():
                 content = content.replace(key, str(val))
 
-            with open(ci_file, "w", encoding="utf-8") as f:
-                f.write(content)
+            ci_file.write_text(content, encoding="utf-8")
         except Exception as e:
             logging.error(f"Failed to create CI file: {e}")
             raise RuntimeError(f"Failed to create CI file: {e}") from e
 
         return "created"
 
-        
+
+class GithubCIGenerator(AbstractCIGenerator):
+    @property
+    def ci_dir(self):
+        """Return GitHub Actions workflows directory."""
+        return self.dbt_path.parent / ".github" / "workflows"
+
+    @property
+    def ci_content(self):
+        """Return GitHub Actions template path."""
+        return self.APP_DIR / "common" / "ci_examples" / "ci_example_github.yml"
+
+    @property
+    def ci_file_name(self):
+        """Return GitHub Actions workflow filename."""
+        return "ci.yml"
+
+
+class GitlabCIGenerator(AbstractCIGenerator):
+    @property
+    def ci_dir(self):
+        """Return GitLab CI directory."""
+        return self.dbt_path.parent
+
+    @property
+    def ci_content(self):
+        """Return GitLab CI template path."""
+        return self.APP_DIR / "common" / "ci_examples" / "ci_example_gitlab.yml"
+
+    @property
+    def ci_file_name(self):
+        """Return GitLab CI filename."""
+        return ".gitlab-ci.yml"

@@ -1,21 +1,22 @@
-import os
 import subprocess
 import time
-import typer
 from pathlib import Path
-from rich.markdown import Markdown
-from rich.console import Console
+
 import questionary
+import typer
+from rich.console import Console
+from rich.markdown import Markdown
 
 from common.config import get_config
 from common.exceptions import DBTProfilesExistsError
-from app.ci_generator import GithubCIGenerator
+from app.ci_generator import GithubCIGenerator, GitlabCIGenerator
 from app.provider_builder import OllamaProviderType, ProviderType, build_provider
 
 console = Console()
 config = get_config()
 
 app = typer.Typer(help="DBT Healer CLI")
+
 
 @app.command(help="Setup your enviroment for dbt-healer")
 def setup():
@@ -40,15 +41,15 @@ def setup():
     change_parameter = None
     if answer == 'Current step':
         change_parameter = questionary.select(
-                "Which parameter do you want to overwrite?",
-                choices=[
-                    "Analyze url", 
-                    "Repository path", 
-                    "Name of dbt project", 
-                    "Telegram Bot Token", 
-                    "AI Provider and Token", 
-                    "Git platform and git parameters",
-                ],
+            "Which parameter do you want to overwrite?",
+            choices=[
+                "Analyze url",
+                "Repository path",
+                "Name of dbt project",
+                "Telegram Bot Token",
+                "AI Provider and Token",
+                "Git platform and git parameters",
+            ],
         ).ask()
     else:
         first_setup = True
@@ -112,7 +113,7 @@ def setup():
         console.print(Markdown("8. Which git platform do you use?"))
         answer = questionary.select(
             "Select platform:",
-            choices=['Github'],
+            choices=["Github", "GitLab"],
         ).ask()
         config_dict["git_platform"] = answer
 
@@ -133,13 +134,17 @@ def setup():
     time.sleep(1)
 
     if config.save(config_dict):
-        console.print("[green]Configuration saved successfully![/green]" \
-        "\nIf you want to change any value, you can edit the .env file in the project root directory.")
+        console.print(
+            "[green]Configuration saved successfully![/green]"
+            "\nIf you want to change any value, you can edit the .env file in the project root directory."
+        )
         time.sleep(1)
 
     if change_parameter == 'Git platform and git parameters' or first_setup:
-        if answer == 'Github':
-            generator = GithubCIGenerator()
+        generator = {
+            "Github": GithubCIGenerator,
+            "GitLab": GitlabCIGenerator,
+        }[answer]()
 
         try:
             with console.status("Creating CI workflow..."):
@@ -161,8 +166,7 @@ def setup():
             console.print("[yellow]CI profile already exists. Skipping creation...[/yellow]")
 
         console.print("[green]CI configured successfully![/green]")
-                    
-        
+
 
 @app.command(help="Serve dbt-healer analyzer")
 def serve(port: int = 8888):
@@ -171,14 +175,10 @@ def serve(port: int = 8888):
     config = get_config()
 
     config.save({"service_port": str(port)}) 
-    
-    cmd = ["docker", "compose", "up", "-d"]
-
-    subprocess.run(cmd, check=True)
+    subprocess.run(["docker", "compose", "up", "-d"], check=True)
 
     console.print("[green]Server is running![/green]")
 
-    
 
 if __name__ == "__main__":
     app()

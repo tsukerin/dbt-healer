@@ -1,14 +1,11 @@
 import logging
-import sys
 import os
+import asyncio
 
 os.environ["GIT_PYTHON_REFRESH"] = "quiet"
 
 import github
 from github import Github
-import asyncio
-import subprocess
-from pathlib import Path
 
 from common.config import get_config
 
@@ -16,8 +13,12 @@ from app.push_repo import (
     extract_solution_parts,
     build_repo_file_path,
     create_branch,
+    create_gitlab_branch,
+    create_gitlab_merge_request,
     update_file_in_branch,
+    update_file_in_gitlab_branch,
     create_pull_request,
+    solution_files,
 )
 
 from app.utils import scan_hashes, get_context_log
@@ -25,6 +26,36 @@ from app.provider_builder import build_provider
 from notifier.utils import notify_about_pr
 
 config = get_config()
+
+
+def _create_gitlab_request(solution_parts: list[tuple[str, str]], files: str) -> str:
+    branch_name = create_gitlab_branch(config.base_branch)
+    for solution_content, solution_file in solution_parts:
+        update_file_in_gitlab_branch(
+            build_repo_file_path(solution_file),
+            solution_content,
+            branch_name,
+        )
+    merge_request = create_gitlab_merge_request(branch_name, files)
+    return merge_request["web_url"]
+
+
+def _create_github_request(solution_parts: list[tuple[str, str]], files: str) -> str:
+    client = Github(auth=github.Auth.Token(config.github_token))
+    repo = client.get_repo(f"{config.github_name}/{config.github_repo}")
+    branch_name = create_branch(repo, config.base_branch)
+
+    for solution_content, solution_file in solution_parts:
+        file_path = build_repo_file_path(solution_file)
+        try:
+            logging.info("Accessing file: %s", file_path)
+            update_file_in_branch(repo, file_path, solution_content, branch_name)
+        except github.GithubException as exc:
+            logging.info("GitHub API error: %s - %s", exc.status, exc.data.get("message", ""))
+            raise
+
+    pull_request = create_pull_request(repo, branch_name, files)
+    return pull_request.html_url
 
 
 async def main() -> None:
@@ -42,38 +73,24 @@ async def main() -> None:
         logging.warning("No solution generated; skipping pull request creation.")
         return
 
-    solution_parts = [part for part in extract_solution_parts(solution) if part[0].strip() != "NO_FIX"]
-    
+    solution_parts = [
+        part
+        for part in extract_solution_parts(solution)
+        if part[0].strip() != "NO_FIX"
+    ]
     if not solution_parts:
         logging.warning("No valid solution blocks generated; skipping pull request creation.")
         return
 
-    owner, repo = config.github_name, config.github_repo
+    files = solution_files(solution_parts)
+    if config.git_platform.lower() == "gitlab":
+        request_url = _create_gitlab_request(solution_parts, files)
+    else:
+        request_url = _create_github_request(solution_parts, files)
 
-    client = Github(auth=github.Auth.Token(config.github_token))
-    repo = client.get_repo(f"{owner}/{repo}")
-    
-    files = ', '.join([part[1].strip('\n') for part in solution_parts])
+    logging.info("Pull/merge request created successfully.")
 
-    if files:
-        branch_name = create_branch(repo, config.base_branch)
-
-        for part in solution_parts:
-            solution_content, solution_file = part[0], part[1]
-            file_path = build_repo_file_path(solution_file)
-
-            try:
-                logging.info(f"Accessing file: {file_path}")
-                update_file_in_branch(repo, file_path, solution_content, branch_name)
-            except github.GithubException as exc:
-                logging.info(f"GitHub API error: {exc.status} - {exc.data.get('message', '')}")
-                raise
-
-        create_pull_request(repo, branch_name, files)
-        
-        logging.info("Pull request created successfully.")
-
-    await notify_about_pr(files)
+    await notify_about_pr(files, request_url)
 
 
 if __name__ == "__main__":

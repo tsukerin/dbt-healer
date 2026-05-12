@@ -8,6 +8,7 @@ from app import utils
 from app.rag import (
     extract_error_signals,
     extract_macro_calls,
+    node_symbols,
     relevance_score,
     structured_sql_context,
 )
@@ -16,9 +17,13 @@ MODEL_TYPES = {"model", "snapshot", "seed"}
 MAX_DIAGNOSTIC_MODELS = 6
 MAX_IMPACT_MODELS = 5
 MAX_UPSTREAM_DEPTH = 2
-MAX_DOWNSTREAM_DEPTH = 1
+MAX_DOWNSTREAM_DEPTH = 2
 COMPILED_SQL_RE = re.compile(r"compiled code at\s+(?P<path>target/[^\s]+\.sql)", re.IGNORECASE)
 ERROR_LOCATION_RE = re.compile(r"\b(?:line|LINE)\s+\d+|\[\d+:\d+\]")
+COLUMN_ERROR_RE = re.compile(
+    r"\b(?:column|field|identifier)\b|does not exist|ambiguous column|invalid identifier",
+    re.IGNORECASE,
+)
 
 
 def _read_source_text(path: Path) -> str:
@@ -87,6 +92,17 @@ def _error_log() -> str:
     return str(log or "")
 
 
+def _test_failure_name(error_log: str) -> str | None:
+    for match in utils.exp.DBT_FAILURE_RE.finditer(error_log):
+        if match.groupdict().get("resource", "").lower() == "test":
+            return match.groupdict().get("name")
+    return None
+
+
+def _needs_lineage_context(error_log: str) -> bool:
+    return bool(_test_failure_name(error_log) or COLUMN_ERROR_RE.search(error_log))
+
+
 def _should_shrink_context() -> bool:
     return str(getattr(utils.config, "ai_provider", "") or "").lower() == "ollama"
 
@@ -125,6 +141,22 @@ def _find_node(manifest: dict, file: str) -> tuple[str | None, dict | None]:
     return None, None
 
 
+def _find_test_node(manifest: dict, error_log: str) -> tuple[str | None, dict | None]:
+    name = _test_failure_name(error_log)
+    if not name:
+        return None, None
+
+    name = name.strip().strip("`'\".,;:()[]{}").split(".")[-1]
+    for node_id, node in manifest.get("nodes", {}).items():
+        if node.get("resource_type") != "test":
+            continue
+        identifiers = {str(node.get("name") or ""), str(node.get("alias") or "")}
+        if name in identifiers or f".{name}." in node_id or node_id.endswith(f".{name}"):
+            return node_id, node
+
+    return None, None
+
+
 def _model_source(failed_repo_path: Path, node: dict) -> str:
     return _read_source_text(failed_repo_path / node["original_file_path"])
 
@@ -147,6 +179,15 @@ def _downstream_model_ids(manifest: dict, node_id: str) -> list[str]:
     ]
 
 
+def _test_model_ids(manifest: dict, test_node: dict | None) -> list[str]:
+    nodes = manifest.get("nodes", {})
+    return [
+        dep_id
+        for dep_id in (test_node or {}).get("depends_on", {}).get("nodes", [])
+        if nodes.get(dep_id, {}).get("resource_type") in MODEL_TYPES
+    ]
+
+
 def _ranked_model_ids(failed_repo_path: Path, manifest: dict, node_ids: list[str], signals: set[str]) -> list[str]:
     return sorted(
         node_ids,
@@ -160,34 +201,111 @@ def _ranked_model_ids(failed_repo_path: Path, manifest: dict, node_ids: list[str
     )
 
 
-def _diagnostic_model_ids(
+def _model_signals(failed_repo_path: Path, manifest: dict, node_id: str) -> set[str]:
+    node = manifest["nodes"][node_id]
+    return node_symbols(node["name"], node["original_file_path"], _model_source(failed_repo_path, node))
+
+
+def _flat_text(value) -> str:
+    if isinstance(value, dict):
+        return " ".join(_flat_text(item) for item in value.values())
+    if isinstance(value, list):
+        return " ".join(_flat_text(item) for item in value)
+    return str(value or "")
+
+
+def _test_signals(manifest: dict, test_node: dict | None) -> set[str]:
+    if not test_node:
+        return set()
+
+    parts = [
+        test_node.get("name"),
+        test_node.get("column_name"),
+        _flat_text(test_node.get("test_metadata")),
+    ]
+    for model_id in _test_model_ids(manifest, test_node):
+        node = manifest["nodes"][model_id]
+        parts += [node.get("name"), node.get("alias"), Path(node.get("original_file_path", "")).stem]
+
+    return extract_error_signals(" ".join(str(part or "") for part in parts))
+
+
+def _test_failure_context(manifest: dict, test_node: dict | None) -> str:
+    if not test_node:
+        return ""
+
+    metadata = test_node.get("test_metadata") or {}
+    test_type = metadata.get("name") or str(test_node.get("name", "")).split("_", 1)[0]
+    lines = [
+        f"name: {test_node.get('name')}",
+        f"type: {test_type}",
+        f"schema_file: {test_node.get('original_file_path')}",
+    ]
+    if test_node.get("column_name"):
+        lines.append(f"column: {test_node.get('column_name')}")
+
+    for key, value in (metadata.get("kwargs") or {}).items():
+        lines.append(f"{key}: {value}")
+
+    for model_id in _test_model_ids(manifest, test_node):
+        node = manifest["nodes"][model_id]
+        lines.append(f"depends_on_model: {node.get('name')} ({node.get('original_file_path')})")
+
+    return "<DBT_TEST_FAILURE>\n" + "\n".join(lines) + "\n</DBT_TEST_FAILURE>"
+
+
+def _lineage_model_ids(
     failed_repo_path: Path,
     manifest: dict,
     root_id: str,
     signals: set[str],
-) -> list[tuple[str, int]]:
+    query: str,
+    next_ids,
+    max_depth: int,
+    max_models: int,
+    relevance_after_first: bool = False,
+) -> list[tuple[str, int, set[str], str]]:
     selected = []
-    seen = set()
-    direct = _ranked_model_ids(failed_repo_path, manifest, _upstream_model_ids(manifest, root_id), signals)
+    seen = {root_id}
+    queue = [(root_id, 0, signals, query)]
 
-    for node_id in direct:
-        if len(selected) >= MAX_DIAGNOSTIC_MODELS:
-            break
-        selected.append((node_id, 1))
-        seen.add(node_id)
-
-    for parent_id, depth in list(selected):
-        if depth >= MAX_UPSTREAM_DEPTH:
+    while queue and len(selected) < max_models:
+        parent_id, depth, parent_signals, parent_query = queue.pop(0)
+        if depth >= max_depth:
             continue
-        for node_id in _ranked_model_ids(failed_repo_path, manifest, _upstream_model_ids(manifest, parent_id), signals):
-            if len(selected) >= MAX_DIAGNOSTIC_MODELS:
-                break
+
+        ranked_ids = _ranked_model_ids(
+            failed_repo_path,
+            manifest,
+            next_ids(manifest, parent_id),
+            parent_signals,
+        )
+        for node_id in ranked_ids:
             if node_id in seen:
                 continue
             node = manifest["nodes"][node_id]
-            if relevance_score(_model_source(failed_repo_path, node), node["name"], node["original_file_path"], signals) > 0:
-                selected.append((node_id, depth + 1))
-                seen.add(node_id)
+            if relevance_after_first and depth > 0:
+                score = relevance_score(
+                    _model_source(failed_repo_path, node),
+                    node["name"],
+                    node["original_file_path"],
+                    parent_signals,
+                )
+                if score <= 0:
+                    continue
+
+            seen.add(node_id)
+            selected.append((node_id, depth + 1, parent_signals, parent_query))
+            queue.append(
+                (
+                    node_id,
+                    depth + 1,
+                    _model_signals(failed_repo_path, manifest, node_id),
+                    _model_source(failed_repo_path, node),
+                )
+            )
+            if len(selected) >= max_models:
+                break
 
     return selected
 
@@ -209,6 +327,31 @@ def _node_context(
         f"{body}\n"
         f"</{label}>"
     )
+
+
+def _related_test_contexts(
+    failed_repo_path: Path,
+    manifest: dict,
+    test_node: dict | None,
+    primary_id: str,
+    signals: set[str],
+    query: str,
+) -> dict[str, str]:
+    contexts = {}
+    for index, model_id in enumerate(_test_model_ids(manifest, test_node), start=1):
+        if model_id == primary_id:
+            continue
+        node = manifest["nodes"][model_id]
+        contexts[f"test_model_{index}"] = _node_context(
+            failed_repo_path,
+            manifest,
+            model_id,
+            signals,
+            "RELATED_TEST_MODEL",
+            1,
+            query,
+        )
+    return contexts
 
 
 def _definition_text(path: Path, signals: set[str], query: str) -> str:
@@ -260,14 +403,22 @@ def _definition_contexts(
         path = source.get("original_file_path") if source else None
         if path:
             text = _definition_text(failed_repo_path / path, signals, error_log)
-            contexts.append(f"<SOURCE_DEFINITION name=\"{source.get('name')}\" path=\"{path}\">\n{text}\n</SOURCE_DEFINITION>")
+            contexts.append(
+                f"<SOURCE_DEFINITION name=\"{source.get('name')}\" path=\"{path}\">\n"
+                f"{text}\n"
+                f"</SOURCE_DEFINITION>"
+            )
 
     for match in utils.exp.DBT_SOURCE_PATH_RE.finditer(error_log):
         path = utils._normalize_dbt_source_path(match.group("path"))
         if path and path.endswith((".yml", ".yaml")) and path != node.get("original_file_path"):
             text = _definition_text(failed_repo_path / path, signals, error_log)
             if text:
-                contexts.append(f"<SCHEMA_DEFINITION path=\"{path}\">\n{text}\n</SCHEMA_DEFINITION>")
+                contexts.append(
+                    f"<SCHEMA_DEFINITION path=\"{path}\">\n"
+                    f"{text}\n"
+                    f"</SCHEMA_DEFINITION>"
+                )
 
     return list(dict.fromkeys(contexts))[:3]
 
@@ -291,6 +442,10 @@ def _compiled_sql_context(failed_repo_path: Path, error_log: str) -> str:
 
 def parse_lineage_models(model: str) -> dict[str, str]:
     """Collect selective upstream diagnostic context from manifest."""
+    error_log = _error_log()
+    if not _needs_lineage_context(error_log):
+        return {}
+
     if "macros" in Path(model).parts:
         return {}
 
@@ -301,24 +456,52 @@ def parse_lineage_models(model: str) -> dict[str, str]:
         logging.warning("Model for %s not found in dbt manifest; skipping lineage context.", model)
         return {}
 
-    error_log = _error_log()
+    _, test_node = _find_test_node(manifest, error_log)
     primary_source = _model_source(failed_repo_path, node)
-    signals = extract_error_signals(error_log, primary_source)
+    signals = extract_error_signals(error_log, primary_source) | _test_signals(manifest, test_node)
     contexts = {}
 
-    for upstream_id, depth in _diagnostic_model_ids(failed_repo_path, manifest, node_id, signals):
+    test_context = _test_failure_context(manifest, test_node)
+    if test_context:
+        contexts["test_failure"] = test_context
+
+    contexts.update(
+        _related_test_contexts(
+            failed_repo_path,
+            manifest,
+            test_node,
+            node_id,
+            signals,
+            error_log,
+        )
+    )
+
+    for upstream_id, depth, context_signals, context_query in _lineage_model_ids(
+        failed_repo_path,
+        manifest,
+        node_id,
+        signals,
+        error_log,
+        _upstream_model_ids,
+        MAX_UPSTREAM_DEPTH,
+        MAX_DIAGNOSTIC_MODELS,
+        relevance_after_first=True,
+    ):
         upstream = manifest["nodes"][upstream_id]
         contexts[upstream["name"]] = _node_context(
             failed_repo_path,
             manifest,
             upstream_id,
-            signals,
+            context_signals,
             "UPSTREAM_MODEL",
             depth,
-            error_log,
+            context_query,
         )
 
-    for index, macro_context in enumerate(_macro_contexts(failed_repo_path, manifest, node, primary_source, error_log), start=1):
+    for index, macro_context in enumerate(
+        _macro_contexts(failed_repo_path, manifest, node, primary_source, error_log),
+        start=1,
+    ):
         contexts[f"macro_{index}"] = macro_context
 
     for index, definition_context in enumerate(
@@ -331,7 +514,11 @@ def parse_lineage_models(model: str) -> dict[str, str]:
 
 
 def get_impact_context(file: str) -> str:
-    """Build direct downstream context for post-fix validation."""
+    """Build downstream context for impact validation."""
+    error_log = _error_log()
+    if not _needs_lineage_context(error_log):
+        return ""
+
     failed_repo_path = utils.get_failed_repo_path()
     manifest = _read_manifest(failed_repo_path)
     node_id, node = _find_node(manifest, file)
@@ -339,25 +526,28 @@ def get_impact_context(file: str) -> str:
         return ""
 
     primary_source = _model_source(failed_repo_path, node)
-    error_log = _error_log()
-    signals = extract_error_signals(error_log, primary_source)
-    downstream_ids = _ranked_model_ids(
-        failed_repo_path,
-        manifest,
-        _downstream_model_ids(manifest, node_id),
-        signals,
-    )[:MAX_IMPACT_MODELS]
+    _, test_node = _find_test_node(manifest, error_log)
+    signals = extract_error_signals(error_log, primary_source) | _test_signals(manifest, test_node)
     sections = [
         _node_context(
             failed_repo_path,
             manifest,
             downstream_id,
-            signals,
+            context_signals,
             "DOWNSTREAM_MODEL",
-            MAX_DOWNSTREAM_DEPTH,
-            error_log,
+            depth,
+            context_query,
         )
-        for downstream_id in downstream_ids
+        for downstream_id, depth, context_signals, context_query in _lineage_model_ids(
+            failed_repo_path,
+            manifest,
+            node_id,
+            signals,
+            error_log,
+            _downstream_model_ids,
+            MAX_DOWNSTREAM_DEPTH,
+            MAX_IMPACT_MODELS,
+        )
     ]
     return "\n".join(sections)
 
@@ -369,6 +559,19 @@ def _file_path(file: str) -> Path:
     return utils.get_failed_repo_path() / path
 
 
+def _primary_context_file(file: str, error_log: str) -> str:
+    path = _file_path(file)
+    if path.suffix.lower() not in {".yml", ".yaml"}:
+        return file
+
+    failed_repo_path = utils.get_failed_repo_path()
+    manifest = _read_manifest(failed_repo_path)
+    _, test_node = _find_test_node(manifest, error_log)
+    for model_id in _test_model_ids(manifest, test_node):
+        return manifest["nodes"][model_id]["original_file_path"]
+    return file
+
+
 def get_file_context(files: list[str] | str) -> str:
     """Build primary source and diagnostic context for files."""
     sources = []
@@ -377,13 +580,15 @@ def get_file_context(files: list[str] | str) -> str:
         files = [files]
 
     for file in files:
+        error_log = _error_log()
+        file = _primary_context_file(file, error_log)
         path = _file_path(file)
         if "target" in path.parts or not path.is_file():
             continue
 
-        error_log = _error_log()
         relative_path = _relative_to_failed_repo(path)
         diagnostic_context = "\n".join(parse_lineage_models(file).values())
+        impact_context = get_impact_context(file)
 
         sources.append(
             f"<PRIMARY_ERROR_MODEL path=\"{relative_path}\">\n"
@@ -392,7 +597,7 @@ def get_file_context(files: list[str] | str) -> str:
             f"{_compiled_sql_context(utils.get_failed_repo_path(), error_log)}\n"
             f"</PRIMARY_ERROR_MODEL>\n\n"
             f"<DIAGNOSTIC_CONTEXT>\n{diagnostic_context or 'NO_DIAGNOSTIC_CONTEXT'}\n</DIAGNOSTIC_CONTEXT>\n\n"
-            f"<IMPACT_CONTEXT>\nDeferred until a candidate fix is generated; do not use downstream models in the first fix.\n</IMPACT_CONTEXT>"
+            f"<IMPACT_CONTEXT>\n{impact_context or 'NO_IMPACT_CONTEXT'}\n</IMPACT_CONTEXT>"
         )
 
     return "\n".join(sources)

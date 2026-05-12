@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import BinaryIO
+from urllib.parse import quote
 import subprocess
 import logging
 import json
@@ -326,6 +327,17 @@ def prepare_dbt_metadata(dbt_project_path: Path) -> None:
         )
 
 
+def _authenticated_repo_url(repo: str) -> str:
+    """Return clone URL with configured token when available."""
+    if not config.github_token or not repo.startswith("https://"):
+        return repo
+
+    token = quote(config.github_token, safe="")
+    if config.git_platform.lower() == "gitlab":
+        return repo.replace("https://", f"https://oauth2:{token}@")
+    return repo.replace("https://", f"https://{config.github_name}:{token}@")
+
+
 def clone_repo_from_ci(repo: str, commit_hash: str, dbt_path: str, log_file: BinaryIO) -> None:
     """Clone failed repository and store uploaded dbt log."""
     workdir = Path(Path.home() / ".failedrepo")
@@ -334,7 +346,7 @@ def clone_repo_from_ci(repo: str, commit_hash: str, dbt_path: str, log_file: Bin
     repo_name = repo.split("/")[-1].replace(".git", "")
     repo_dir = workdir / repo_name
 
-    auth_repo = repo.replace("https://", f"https://{config.github_name}:{config.github_token}@")
+    auth_repo = _authenticated_repo_url(repo)
 
     if not (repo_dir / ".git").exists():
         subprocess.run(["git", "clone", "--depth", "1", auth_repo], cwd=workdir, check=True)
@@ -354,4 +366,3 @@ def clone_repo_from_ci(repo: str, commit_hash: str, dbt_path: str, log_file: Bin
         raise RuntimeError(f"DBT project not found at {failed_repo_path}")
 
     prepare_dbt_metadata(failed_repo_path)
-
